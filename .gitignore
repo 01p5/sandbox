@@ -1,0 +1,17 @@
+inf/env.sh
+inf/deployment/connect.sh
+inf/deployment/inventory.ini
+inf/deployment/k8s.pem
+inf/deployment/wg-client.conf
+inf/deployment/wg-client-*.conf
+inf/terraform/.terraform/
+inf/terraform/.terraform.lock.hcl
+inf/terraform/*.tfstate
+inf/terraform/*.tfstate.*
+inf/terraform/crash.log
+# Real tfvars may carry provider keys — keep only the .example committed.
+inf/terraform/terraform.tfvars
+inf/terraform/*.auto.tfvars
+# webfront runtime state (certs/challenges) — only created on the node.
+inf/webfront/certbot/
+.DS_Store
