@@ -1,0 +1,179 @@
+---
+# Olympus AWS demo — kubeadm cluster + dashboard + TLS front.
+# Run from inf/ansible against the Terraform-generated inventory:
+#   ansible-playbook site.yml -e openai_api_key=... (optional)
+
+# ----------------------------------------------------------------------------
+# 1) Common prereqs on every node (containerd + docker + kubeadm stack).
+# ----------------------------------------------------------------------------
+- name: Common prereqs
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run prereqs script
+      ansible.builtin.script: files/prereqs.sh
+      args:
+        executable: /bin/bash
+      environment:
+        K8S_VERSION: "{{ k8s_version }}"
+
+# ----------------------------------------------------------------------------
+# 2) Control plane: kubeadm init, Calico, Helm-deploy Olympus, TLS front.
+# ----------------------------------------------------------------------------
+- name: Control plane
+  hosts: control_plane
+  become: true
+  gather_facts: false
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Allow host nginx to reach the NodePort via 127.0.0.1
+      ansible.posix.sysctl:
+        name: net.ipv4.conf.all.route_localnet
+        value: "1"
+        sysctl_set: true
+        reload: true
+      ignore_errors: true # collection may be absent; fall back below
+      register: rl
+
+    - name: route_localnet fallback (no ansible.posix)
+      ansible.builtin.shell: |
+        sysctl -w net.ipv4.conf.all.route_localnet=1
+        echo 'net.ipv4.conf.all.route_localnet=1' >/etc/sysctl.d/99-route-localnet.conf
+      when: rl is failed
+      changed_when: true
+
+    - name: kubeadm init
+      ansible.builtin.command: >
+        kubeadm init
+        --apiserver-advertise-address={{ node_ip }}
+        --pod-network-cidr={{ pod_cidr }}
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: Wait for kube-apiserver
+      ansible.builtin.command: kubectl get --raw=/healthz
+      register: apihealth
+      until: apihealth.rc == 0
+      retries: 40
+      delay: 5
+      changed_when: false
+
+    - name: Install Calico CNI
+      ansible.builtin.command: >
+        kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/calico.yaml
+      register: calico
+      changed_when: "'created' in calico.stdout or 'configured' in calico.stdout"
+
+    - name: Install Helm
+      ansible.builtin.shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Clone Olympus repo (for the chart)
+      ansible.builtin.git:
+        repo: "{{ olympus_repo_url }}"
+        version: "{{ olympus_repo_ref }}"
+        dest: /opt/olympus-src
+        depth: 1
+        force: true
+
+    - name: Ensure namespace
+      ansible.builtin.shell: >
+        kubectl create namespace {{ olympus_namespace }}
+        --dry-run=client -o yaml | kubectl apply -f -
+      register: ns
+      changed_when: "'created' in ns.stdout"
+
+    - name: Provider-key secret (only if a key was supplied)
+      ansible.builtin.shell: >
+        kubectl -n {{ olympus_namespace }} create secret generic {{ olympus_release }}-secrets
+        {% if openai_api_key | length > 0 %}--from-literal=openai_api_key={{ openai_api_key }}{% endif %}
+        {% if anthropic_api_key | length > 0 %}--from-literal=anthropic_api_key={{ anthropic_api_key }}{% endif %}
+        --dry-run=client -o yaml | kubectl apply -f -
+      when: (openai_api_key | length > 0) or (anthropic_api_key | length > 0)
+      no_log: true
+      changed_when: true
+
+    - name: Deploy dashboard (Helm)
+      ansible.builtin.command: >
+        helm upgrade --install {{ olympus_release }} /opt/olympus-src/infra/k8s/charts/olympus
+        --namespace {{ olympus_namespace }}
+        --set image.repository=olympus/dashboard
+        --set image.tag={{ image_tag }}
+        --set image.pullPolicy=Never
+        --set dashboard.router={{ olympus_router }}
+        --set service.type=NodePort
+        --set service.port=80
+        --set service.targetPort=8765
+        --set secrets.sshPrivateKeyKey=
+      register: helmout
+      changed_when: "'has been upgraded' in helmout.stdout or 'has been installed' in helmout.stdout"
+
+    - name: Pin the dashboard NodePort
+      ansible.builtin.shell: >
+        kubectl -n {{ olympus_namespace }} patch svc {{ olympus_release }}-olympus --type merge
+        -p '{"spec":{"type":"NodePort","ports":[{"name":"http","port":80,"targetPort":8765,"nodePort":{{ dashboard_node_port }}}]}}'
+      changed_when: true
+
+    - name: Generate worker join command
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: joincmd
+      changed_when: false
+
+    - name: Stash join command for the workers
+      ansible.builtin.set_fact:
+        kube_join_command: "{{ joincmd.stdout }}"
+
+    # --- TLS front (webfront: nginx + certbot) ---
+    - name: Copy webfront stack
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../webfront/"
+        dest: /opt/webfront/
+        mode: preserve
+
+    - name: Write domains.conf (hostname -> dashboard NodePort)
+      ansible.builtin.copy:
+        content: "{{ dns_hostname }}:{{ dashboard_node_port }}\n"
+        dest: /opt/webfront/domains.conf
+
+    - name: Wait for DNS to resolve to this node (best-effort, so HTTP-01 doesn't waste attempts)
+      ansible.builtin.shell: "getent hosts {{ dns_hostname }} | awk '{print $1}' | head -1"
+      register: dnsres
+      until: dnsres.stdout == public_ip
+      retries: 60
+      delay: 10
+      changed_when: false
+      failed_when: false
+
+    - name: Bring up the TLS front
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: /opt/webfront
+      environment:
+        CERTBOT_EMAIL: "{{ certbot_email }}"
+        CERTBOT_STAGING: "{{ certbot_staging | string }}"
+      changed_when: true
+
+# ----------------------------------------------------------------------------
+# 3) Worker: build + import the image, then join.
+# ----------------------------------------------------------------------------
+- name: Worker
+  hosts: workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Build + import the Olympus image (slow — multi-stage build, runs synchronously over SSH)
+      ansible.builtin.script: files/build-image.sh
+      args:
+        executable: /bin/bash
+      environment:
+        OLYMPUS_REPO_URL: "{{ olympus_repo_url }}"
+        OLYMPUS_REPO_REF: "{{ olympus_repo_ref }}"
+        IMAGE_TAG: "{{ image_tag }}"
+
+    - name: Join the cluster
+      ansible.builtin.command: "{{ hostvars[groups['control_plane'][0]].kube_join_command }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf

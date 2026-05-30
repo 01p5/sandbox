@@ -1,0 +1,23 @@
+---
+# Deploy parameters for the Olympus AWS demo. No secrets here — provider
+# keys come in via --extra-vars (see deploy.sh / the README).
+
+k8s_version: "1.30"
+pod_cidr: "192.168.0.0/16"
+dashboard_node_port: 30093
+
+olympus_repo_url: "https://github.com/01p5/01p5.git"
+olympus_repo_ref: "main"
+olympus_namespace: "olympus"
+olympus_release: "olympus"
+image_tag: "llm"
+olympus_router: "manual" # or "llm" (needs a provider key)
+
+dns_hostname: "0lympu5.com"
+certbot_email: "admin@01p5.com"
+certbot_staging: "0" # "1" for Let's Encrypt staging while iterating
+
+# Overridden at runtime via --extra-vars; default empty so the chart's
+# optional secret keys are simply omitted.
+openai_api_key: ""
+anthropic_api_key: ""

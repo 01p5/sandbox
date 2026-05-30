@@ -1,13 +1,25 @@
-# Shared prereqs for both kubeadm roles. Sourced (not executed) by
-# control-plane.sh / worker.sh, so it runs under their `set -e` and
-# inherits the exported env (K8S_VERSION, etc.). Installs containerd +
-# docker + the kubeadm/kubelet/kubectl stack and prepares the kernel for
-# Kubernetes networking.
-echo "[olympus] common prereqs $(date -u)"
+#!/usr/bin/env bash
+# Common node prereqs for a kubeadm cluster. Run by Ansible via the
+# `script` module with K8S_VERSION in the environment. Installs containerd
+# + docker + the kubeadm/kubelet/kubectl stack and prepares the kernel for
+# Kubernetes networking. Safe to re-run.
+set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-# Retry apt — EC2 mirrors are occasionally mid-sync at instance birth.
-aptq() { for i in $(seq 1 8); do apt-get -o Acquire::Retries=3 "$@" && return 0; echo "[apt] retry $i: $*"; sleep 15; done; return 1; }
+# apt resilience: the regional EC2 mirror sometimes serves out-of-sync
+# indexes. Treat `update` as best-effort (the install is the real gate),
+# and fall back to the canonical archive mirror after a couple of misses.
+aptq() {
+  if [ "$1" = update ]; then apt-get update -y || true; return 0; fi
+  for i in $(seq 1 6); do
+    apt-get "$@" && return 0
+    echo "[apt] retry $i: $*"
+    [ "$i" -ge 2 ] && sed -i 's#https\?://[a-z0-9.-]*\.ec2\.archive\.ubuntu\.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+    apt-get update -y || true
+    sleep 15
+  done
+  return 1
+}
 
 # kernel modules + sysctls k8s networking needs
 cat >/etc/modules-load.d/k8s.conf <<'EOF'
@@ -28,7 +40,7 @@ sysctl --system
 swapoff -a || true
 
 aptq update
-aptq install -y apt-transport-https ca-certificates curl gpg git docker.io
+aptq install -y apt-transport-https ca-certificates curl gpg git docker.io docker-compose-v2
 systemctl enable --now docker
 
 # containerd configured for the systemd cgroup driver (kubeadm requirement)
@@ -48,4 +60,4 @@ aptq update
 aptq install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
 systemctl enable kubelet
-echo "[olympus] common prereqs done $(date -u)"
+echo "[prereqs] done $(date -u)"

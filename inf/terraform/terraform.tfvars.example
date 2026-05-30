@@ -1,35 +1,22 @@
 # Copy to terraform.tfvars (gitignored) and adjust. Every value has a
 # default in variables.tf — you can run with an empty tfvars.
+#
+# NOTE: cluster/deploy knobs (k8s version, Olympus repo, router, certbot)
+# live in inf/ansible/group_vars/all.yml, not here. Terraform only stands
+# up the boxes + DNS and writes the Ansible inventory.
 
-# --- region / naming ---
 aws_region    = "us-west-2" # Oregon
 customer_name = "sandbox"
 
-# --- instances ---
 control_plane_instance_type = "t3.medium"
 worker_instance_type        = "t3.large"
 root_volume_size            = 40
 
-# --- exposure (tighten ssh to your IP for anything non-throwaway) ---
+# Tighten SSH to your IP for anything non-throwaway.
 # ssh_ingress_cidr = "203.0.113.4/32"
-# web_ingress_cidr = "0.0.0.0/0"
 
-# --- Olympus + sandbox source ---
-olympus_repo_url = "https://github.com/01p5/01p5.git"
-olympus_repo_ref = "main"
-sandbox_repo_url = "https://github.com/01p5/sandbox.git"
-sandbox_repo_ref = "main"
-
-# --- router + provider keys (supply keys via env, do not commit) ---
-olympus_router = "manual" # or "llm"
-#   export TF_VAR_openai_api_key=sk-...
-
-# --- DNS + TLS ---
-dns_hostname  = "0lympu5.com"
-certbot_email = "admin@01p5.com"
-certbot_staging = "0" # "1" for Let's Encrypt staging while testing
+dns_hostname = "0lympu5.com"
 
 # Cloudflare token via env only — NEVER commit:
 #   export TF_VAR_cloudflare_api_token=...
-# zone id is not secret:
 cloudflare_zone_id = "63b9172374ab880f8fe2f2311f05dc6e"

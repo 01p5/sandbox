@@ -29,11 +29,15 @@ Browser ──https──> Cloudflare DNS (A, DNS-only) ──> control-plane EI
    └─────────────────────────────────────────────────────────────────┘
 ```
 
-Each node clones **this sandbox repo** on first boot and runs its role
-script (`inf/bootstrap/{control-plane,worker}.sh`, both sourcing
-`common.sh`). The worker builds the image (no registry needed); the
-control-plane taint keeps the dashboard pod on the worker, so the image is
-always where the pod runs.
+**Terraform provisions, Ansible deploys.** Terraform stands up the two
+blank Ubuntu boxes (+ network, EIP, DNS) and writes an Ansible inventory to
+`../deployment/inventory.ini`. `inf/ansible/site.yml` then does everything
+over SSH: containerd + the kubeadm stack on both nodes, `kubeadm init` +
+Calico on the control-plane, Helm-deploy the dashboard, bring up the TLS
+front, then build the image on the worker and join it. The worker builds
+the image (no registry needed); the control-plane taint keeps the dashboard
+pod on the worker, so the image is always where the pod runs. The playbook
+is idempotent — re-run it freely; nothing is rebuilt that already exists.
 
 ## Why these choices (vs the k3s single-node it replaced)
 
@@ -55,35 +59,34 @@ always where the pod runs.
 ## Deploy
 
 ```bash
+# 1) provision + write the Ansible inventory
 cd inf/terraform
 cp terraform.tfvars.example terraform.tfvars   # optional — defaults work
-
 export TF_VAR_cloudflare_api_token=...          # never commit this
-# optional LLM agents:
-#   export TF_VAR_olympus_router=llm
-#   export TF_VAR_openai_api_key=sk-...
-
 terraform init
 terraform apply
+
+# 2) bootstrap the cluster + deploy Olympus over SSH
+cd ../ansible
+ansible-playbook site.yml
+#   optional LLM agents:
+#     ansible-playbook site.yml -e olympus_router=llm -e openai_api_key=sk-...
 ```
 
-`apply` returns in a few minutes; the cluster then needs **~15–20 min**:
-the worker builds the image, joins, the dashboard schedules, and certbot
-issues the cert once DNS resolves. Watch it:
+`terraform apply` takes a couple of minutes. `ansible-playbook` then runs
+**~15 min**, dominated by the worker building the dashboard image (no
+registry, so it's built on-box). The certbot cert is issued during the run
+once DNS resolves to the control-plane EIP.
 
-```bash
-ssh -i ../deployment/k8s.pem ubuntu@$(terraform output -raw public_ip) \
-    'sudo tail -f /var/log/olympus-bootstrap.log'
-# and the TLS front:
-ssh ... 'cd /opt/webfront && sudo docker compose logs -f'
-```
-
-When ready:
+When it finishes:
 
 ```bash
 curl https://0lympu5.com/healthz     # → {"ok": true}
 open  https://0lympu5.com/
 ```
+
+Re-running `ansible-playbook site.yml` is safe and fast (idempotent) — it's
+the fix-and-retry loop, no instance rebuilds.
 
 ## Outputs
 
@@ -102,11 +105,18 @@ terraform destroy
 
 ## Notes / caveats
 
-- **First boot is slow** — the image builds on the worker (no registry).
-- **Provider keys + the join token live in user_data** (IMDS-readable).
-  Fine for a throwaway demo; never reuse a production key.
-- **Cert issuance needs DNS live first** — the control-plane waits for
-  `0lympu5.com` to resolve to its EIP before starting webfront, so the
-  HTTP-01 challenge doesn't burn Let's Encrypt rate limits. Set
-  `certbot_staging = "1"` if you're iterating.
-- **No secrets are committed.** Token + keys come from `TF_VAR_*` env.
+- **The Ansible run is slow** — the image builds on the worker (no
+  registry), ~12 min, run synchronously over SSH.
+- **Provider keys** are passed to Ansible via `-e` at runtime and stored as
+  a k8s Secret. The kubeadm join token is generated on the control-plane at
+  deploy time (`kubeadm token create`), not pre-shared. Nothing sensitive
+  lands in EC2 user_data (there is none).
+- **Cert issuance waits for DNS** — the playbook waits for `0lympu5.com` to
+  resolve to the control-plane EIP before starting webfront, so the HTTP-01
+  challenge doesn't burn Let's Encrypt rate limits. Set
+  `certbot_staging: "1"` in `group_vars/all.yml` if you're iterating.
+- **No secrets are committed.** Cloudflare token via `TF_VAR_*`; provider
+  keys via `ansible-playbook -e`. `inf/env.sh` and `inf/deployment/` are
+  gitignored.
+- **Tear-down replaces the cluster.** `terraform destroy` removes the
+  instances; a fresh apply + playbook rebuilds it (and the EIP changes).
