@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""
+gpu-mcp — synthetic GPU health MCP server for the Olympus demo.
+
+Speaks Model Context Protocol (2024-11-05) over stdio. Returns
+plausible synthetic per-node nvidia-smi / ECC / XID / NVLink data so
+the Olympus HPC agent has a real-feeling diagnostic surface for
+``drain_advisor`` decisions.
+
+All tools are read-only — Olympus's HPC agent only does drain
+recommendations through this server; actual drain commands go through
+slurm-mcp's jobs_hold + ``scontrol`` reach.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from typing import Any
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _protocol import error_result, serve_stdio, text_result  # noqa: E402
+
+
+SERVER_INFO = {"name": "gpu-mcp-demo", "version": "0.1.0"}
+
+
+# ---------------------------------------------------------------------
+# Synthetic fleet — same node names as slurm-mcp so the two surfaces
+# correlate ("gpu-n04 is drain because gpu-mcp shows ECC errors")
+# ---------------------------------------------------------------------
+
+
+_GPU_FLEET: dict[str, dict[str, Any]] = {
+    "gpu-n01": {
+        "model": "NVIDIA H100 80GB HBM3",
+        "driver": "550.54.15",
+        "cuda": "12.4",
+        "gpus": [
+            {"idx": i, "util_pct": 96 + (i % 3), "temp_c": 71 + (i % 4),
+             "mem_used_gb": 76.2, "mem_total_gb": 80,
+             "ecc_sbe": 0, "ecc_dbe": 0, "row_remap_pending": 0,
+             "xid_recent": []}
+            for i in range(8)
+        ],
+        "nvlink_health": "OK",
+        "dcgm": {"power_w": 6400, "throttle_reasons": ["none"]},
+    },
+    "gpu-n02": {
+        "model": "NVIDIA H100 80GB HBM3",
+        "driver": "550.54.15",
+        "cuda": "12.4",
+        "gpus": [
+            {"idx": i, "util_pct": 88 + (i % 5), "temp_c": 68 + (i % 5),
+             "mem_used_gb": 70.0, "mem_total_gb": 80,
+             "ecc_sbe": 1 if i == 4 else 0, "ecc_dbe": 0,
+             "row_remap_pending": 0, "xid_recent": []}
+            for i in range(8)
+        ],
+        "nvlink_health": "OK",
+        "dcgm": {"power_w": 5700, "throttle_reasons": ["none"]},
+    },
+    "gpu-n03": {
+        "model": "NVIDIA H100 80GB HBM3",
+        "driver": "550.54.15",
+        "cuda": "12.4",
+        "gpus": [
+            {"idx": i, "util_pct": 0, "temp_c": 38,
+             "mem_used_gb": 0.1, "mem_total_gb": 80,
+             "ecc_sbe": 0, "ecc_dbe": 0, "row_remap_pending": 0,
+             "xid_recent": []}
+            for i in range(8)
+        ],
+        "nvlink_health": "OK",
+        "dcgm": {"power_w": 320, "throttle_reasons": ["IdleClocks"]},
+    },
+    "gpu-n04": {
+        "model": "NVIDIA H100 80GB HBM3",
+        "driver": "550.54.15",
+        "cuda": "12.4",
+        "gpus": [
+            *[
+                {"idx": i, "util_pct": 0, "temp_c": 40,
+                 "mem_used_gb": 0.1, "mem_total_gb": 80,
+                 "ecc_sbe": 0, "ecc_dbe": 0, "row_remap_pending": 0,
+                 "xid_recent": []}
+                for i in range(3)
+            ],
+            # GPU 3 is the broken one — XID 48 (DBE / ECC), pending remap.
+            {"idx": 3, "util_pct": 0, "temp_c": 42,
+             "mem_used_gb": 0.1, "mem_total_gb": 80,
+             "ecc_sbe": 23, "ecc_dbe": 1, "row_remap_pending": 4,
+             "xid_recent": [
+                 {"ts": "2026-05-30T13:11:02Z", "xid": 48,
+                  "msg": "double-bit ECC error, channel 12"},
+                 {"ts": "2026-05-30T13:15:38Z", "xid": 63,
+                  "msg": "row remap pending"},
+             ]},
+            *[
+                {"idx": i, "util_pct": 0, "temp_c": 40,
+                 "mem_used_gb": 0.1, "mem_total_gb": 80,
+                 "ecc_sbe": 0, "ecc_dbe": 0, "row_remap_pending": 0,
+                 "xid_recent": []}
+                for i in range(4, 8)
+            ],
+        ],
+        "nvlink_health": "DEGRADED",  # one link down because of GPU3
+        "dcgm": {"power_w": 280, "throttle_reasons": ["HwSlowdown"]},
+    },
+}
+
+
+# ---------------------------------------------------------------------
+# Handlers
+# ---------------------------------------------------------------------
+
+
+def tool_fleet_summary(_args: dict[str, Any]) -> dict[str, Any]:
+    total = healthy = degraded = down = 0
+    for node, info in _GPU_FLEET.items():
+        for g in info["gpus"]:
+            total += 1
+            if g["ecc_dbe"] > 0 or g["row_remap_pending"] > 0:
+                degraded += 1
+            else:
+                healthy += 1
+        if info["nvlink_health"] != "OK":
+            down += 1
+    return text_result(
+        f"GPU fleet summary ({len(_GPU_FLEET)} nodes):\n"
+        f"  GPUs total:    {total}\n"
+        f"  GPUs healthy:  {healthy}\n"
+        f"  GPUs degraded: {degraded}\n"
+        f"  nodes w/ degraded NVLink: {down}\n"
+        f"  drain candidates (see drain_advisor): "
+        + ", ".join(_drain_candidates()) or "(none)"
+    )
+
+
+def tool_node_status(args: dict[str, Any]) -> dict[str, Any]:
+    node = (args.get("node") or "").strip()
+    if not node:
+        return error_result("node_status: 'node' (string) required")
+    info = _GPU_FLEET.get(node)
+    if info is None:
+        return error_result(f"unknown node {node!r} (known: {sorted(_GPU_FLEET)})")
+    lines = [
+        f"Node: {node}",
+        f"  model:  {info['model']}",
+        f"  driver: {info['driver']} (CUDA {info['cuda']})",
+        f"  NVLink: {info['nvlink_health']}",
+        f"  DCGM:   {info['dcgm']['power_w']} W, throttle={','.join(info['dcgm']['throttle_reasons'])}",
+        "  GPUs:",
+        f"    {'IDX':>3} {'UTIL%':>6} {'TEMP_C':>7} {'MEM_USED/TOTAL':<18} {'ECC_SBE':>8} {'ECC_DBE':>8} {'REMAP_PEND':>11}",
+    ]
+    for g in info["gpus"]:
+        lines.append(
+            f"    {g['idx']:>3} {g['util_pct']:>6} {g['temp_c']:>7} "
+            f"{g['mem_used_gb']:>5.1f}/{g['mem_total_gb']:<5.0f}GB   "
+            f"{g['ecc_sbe']:>8} {g['ecc_dbe']:>8} {g['row_remap_pending']:>11}"
+        )
+    return text_result("\n".join(lines))
+
+
+def tool_nvlink_topology(args: dict[str, Any]) -> dict[str, Any]:
+    node = (args.get("node") or "").strip()
+    if not node or node not in _GPU_FLEET:
+        return error_result(f"unknown node {node!r}")
+    info = _GPU_FLEET[node]
+    # Fixed 8x8 H100 NVLink fully-connected matrix; degraded node loses
+    # one link to mimic "GPU3 cable degraded".
+    rows = ["NVLink topology:", "    " + " ".join(f"GPU{i}" for i in range(8))]
+    for i in range(8):
+        cells = []
+        for j in range(8):
+            if i == j:
+                cells.append("  X ")
+            elif info["nvlink_health"] != "OK" and (i == 3 or j == 3):
+                cells.append("  - ")  # degraded link
+            else:
+                cells.append("NV6 ")  # 6-link H100 fabric
+        rows.append(f"GPU{i} " + " ".join(c.strip().rjust(4) for c in cells))
+    return text_result("\n".join(rows))
+
+
+def tool_xid_recent(args: dict[str, Any]) -> dict[str, Any]:
+    node = (args.get("node") or "").strip()
+    if not node:
+        return error_result("xid_recent: 'node' (string) required")
+    info = _GPU_FLEET.get(node)
+    if info is None:
+        return error_result(f"unknown node {node!r}")
+    events: list[tuple[str, int, int, str]] = []
+    for g in info["gpus"]:
+        for e in g["xid_recent"]:
+            events.append((e["ts"], g["idx"], e["xid"], e["msg"]))
+    if not events:
+        return text_result(f"no recent XID events on {node}")
+    out = [f"Recent XID events on {node} (last 1h):"]
+    for ts, idx, xid, msg in events:
+        out.append(f"  {ts}  GPU{idx}  XID {xid}: {msg}")
+    return text_result("\n".join(out))
+
+
+def tool_dcgm_metrics(args: dict[str, Any]) -> dict[str, Any]:
+    node = (args.get("node") or "").strip()
+    if not node or node not in _GPU_FLEET:
+        return error_result(f"unknown node {node!r}")
+    info = _GPU_FLEET[node]
+    return text_result(
+        f"DCGM metrics ({node}):\n"
+        f"  total_power_w: {info['dcgm']['power_w']}\n"
+        f"  throttle_reasons: {', '.join(info['dcgm']['throttle_reasons'])}\n"
+        f"  per-GPU util (avg): {sum(g['util_pct'] for g in info['gpus']) / 8:.1f}%\n"
+        f"  per-GPU temp (avg): {sum(g['temp_c']  for g in info['gpus']) / 8:.1f} °C\n"
+    )
+
+
+def _drain_candidates() -> list[str]:
+    out = []
+    for node, info in _GPU_FLEET.items():
+        for g in info["gpus"]:
+            if g["ecc_dbe"] > 0 or g["row_remap_pending"] > 0:
+                out.append(node)
+                break
+        else:
+            if info["nvlink_health"] != "OK":
+                out.append(node)
+    return out
+
+
+def tool_drain_advisor(_args: dict[str, Any]) -> dict[str, Any]:
+    cands = _drain_candidates()
+    if not cands:
+        return text_result("No GPU health issues — no drain recommended.")
+    lines = ["Drain recommendation (operator should review before acting):"]
+    for node in cands:
+        info = _GPU_FLEET[node]
+        reasons = []
+        for g in info["gpus"]:
+            if g["ecc_dbe"] > 0:
+                reasons.append(f"GPU{g['idx']}: {g['ecc_dbe']} DBE")
+            if g["row_remap_pending"] > 0:
+                reasons.append(f"GPU{g['idx']}: {g['row_remap_pending']} row remap(s) pending")
+        if info["nvlink_health"] != "OK":
+            reasons.append(f"NVLink: {info['nvlink_health']}")
+        lines.append(f"  {node}: " + "; ".join(reasons))
+        lines.append("    suggested action: scontrol update nodename=" + node + " state=drain reason=\"GPU health\"")
+    return text_result("\n".join(lines))
+
+
+# ---------------------------------------------------------------------
+# Tool descriptors + entry point
+# ---------------------------------------------------------------------
+
+
+def _arg_schema_node() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {"node": {"type": "string", "description": "Node name, e.g. gpu-n01"}},
+        "required": ["node"],
+        "additionalProperties": False,
+    }
+
+
+def _no_args_schema() -> dict[str, Any]:
+    return {"type": "object", "properties": {}, "additionalProperties": False}
+
+
+TOOLS: list[dict[str, Any]] = [
+    {"name": "fleet_summary", "description": "Fleet-wide rollup: total / healthy / degraded GPU counts + drain candidates.", "inputSchema": _no_args_schema()},
+    {"name": "node_status", "description": "Per-GPU details for one node — util, temp, mem, ECC counters.", "inputSchema": _arg_schema_node()},
+    {"name": "nvlink_topology", "description": "NVLink fabric matrix for one node (degraded links marked).", "inputSchema": _arg_schema_node()},
+    {"name": "xid_recent", "description": "Recent XID events on one node (last hour). Empty if healthy.", "inputSchema": _arg_schema_node()},
+    {"name": "dcgm_metrics", "description": "Key DCGM metrics (power, throttle, average util/temp) for one node.", "inputSchema": _arg_schema_node()},
+    {"name": "drain_advisor", "description": "Operator-facing recommendation: which nodes should be drained + why.", "inputSchema": _no_args_schema()},
+]
+
+
+HANDLERS = {
+    "fleet_summary": tool_fleet_summary,
+    "node_status": tool_node_status,
+    "nvlink_topology": tool_nvlink_topology,
+    "xid_recent": tool_xid_recent,
+    "dcgm_metrics": tool_dcgm_metrics,
+    "drain_advisor": tool_drain_advisor,
+}
+
+
+def main() -> int:
+    return serve_stdio(server_info=SERVER_INFO, tools=TOOLS, handlers=HANDLERS)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -119,7 +119,33 @@
         state: absent
       no_log: true
 
-    - name: Render Helm values (auth + hardening — avoids --set comma quoting)
+    # HPC demo MCP servers (sandbox-only). The two scripts in
+    # inf/hpc-demo-mcp ship the synthetic gpu-mcp + slurm-mcp servers
+    # the HPC agent's prerequisites require. We ship them via a
+    # ConfigMap (mounted defaultMode 0755 + PATH prepended via
+    # extraEnv) so the dashboard pod can spawn ``gpu-mcp`` /
+    # ``slurm-mcp`` directly from the MCP integration card.
+    - name: Copy HPC demo MCP scripts onto cp
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../hpc-demo-mcp/"
+        dest: /tmp/olympus-hpc-demo-mcp/
+        mode: "0755"
+
+    - name: Create olympus-hpc-demo-mcp ConfigMap from the scripts
+      ansible.builtin.shell: >
+        kubectl -n {{ olympus_namespace }} create configmap olympus-hpc-demo-mcp
+        --from-file=/tmp/olympus-hpc-demo-mcp/gpu-mcp
+        --from-file=/tmp/olympus-hpc-demo-mcp/slurm-mcp
+        --from-file=/tmp/olympus-hpc-demo-mcp/_protocol.py
+        --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: true
+
+    - name: Clean up staged HPC demo dir
+      ansible.builtin.file:
+        path: /tmp/olympus-hpc-demo-mcp
+        state: absent
+
+    - name: Render Helm values (auth + hardening + HPC demo wiring)
       ansible.builtin.copy:
         dest: /tmp/olympus-values.yaml
         mode: "0600"
@@ -140,6 +166,22 @@
           hardening:
             demoMode: {{ demo_mode }}
             dailyCostCapUsd: "{{ daily_cost_cap_usd }}"
+          # HPC demo wiring — generic chart hooks added in 01p5 commit
+          # f9db260. ConfigMap from the previous task mounts at
+          # /opt/hpc-demo with 0755 perms; PATH prepended so the HPC
+          # MCP card's default commands (gpu-mcp / slurm-mcp) resolve.
+          extraEnv:
+            - name: PATH
+              value: "/opt/hpc-demo:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          extraVolumes:
+            - name: hpc-demo-mcp
+              configMap:
+                name: olympus-hpc-demo-mcp
+                defaultMode: 493  # 0o755 — files are executable
+          extraVolumeMounts:
+            - name: hpc-demo-mcp
+              mountPath: /opt/hpc-demo
+              readOnly: true
       no_log: true
 
     - name: Deploy dashboard (Helm)
