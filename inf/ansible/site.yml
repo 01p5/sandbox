@@ -131,6 +131,18 @@
         --ignore-not-found=true
       changed_when: false
 
+    # S2.E1 followup — earlier rollout templated PVCs that the kubeadm
+    # cluster couldn't bind (no default StorageClass). 01p5 commit
+    # b90eb6d flipped the chart default to persistence.enabled=false
+    # but helm won't reap orphaned PVCs on chart upgrade. Defensive
+    # delete so the namespace state matches the chart.
+    - name: Remove orphaned sibling-dashboard PVCs (no provisioner on sandbox)
+      ansible.builtin.command: >
+        kubectl -n {{ olympus_namespace }} delete pvc
+        olympus-olympus-slurm-dashboard-hosts olympus-olympus-gpu-dashboard-hosts
+        --ignore-not-found=true
+      changed_when: false
+
     # S1.3 — HPC hosts.json Secret. Optional. Operator drops real
     # files into inf/hpc-hosts/{slurm-hosts.json,gpu-hosts.json} and
     # they get mounted into the dashboard pod at /etc/olympus/hpc/.
