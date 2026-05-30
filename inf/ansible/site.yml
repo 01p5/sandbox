@@ -163,17 +163,18 @@
         mode: "0700"
 
     - name: Create olympus-hpc-hosts Secret from staged files
-      ansible.builtin.shell: |
-        set -e
-        cd /tmp/olympus-hpc-hosts
-        # --from-file accepts repeated args; build them dynamically so
-        # missing files don't break the kubectl invocation.
-        ARGS=""
-        for f in slurm-hosts.json gpu-hosts.json; do
-          if [ -f "$f" ]; then ARGS="$ARGS --from-file=$f"; fi
-        done
-        kubectl -n {{ olympus_namespace }} create secret generic olympus-hpc-hosts \
-          $ARGS --dry-run=client -o yaml | kubectl apply -f -
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          cd /tmp/olympus-hpc-hosts
+          # --from-file accepts repeated args; build them dynamically so
+          # missing files don't break the kubectl invocation.
+          ARGS=""
+          for f in slurm-hosts.json gpu-hosts.json; do
+            if [ -f "$f" ]; then ARGS="$ARGS --from-file=$f"; fi
+          done
+          kubectl -n {{ olympus_namespace }} create secret generic olympus-hpc-hosts \
+            $ARGS --dry-run=client -o yaml | kubectl apply -f -
       changed_when: true
 
     - name: Clean up staged hpc-hosts dir
