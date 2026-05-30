@@ -40,7 +40,15 @@ smtp_starttls: "true"
 otp_ttl_seconds: 600
 otp_rate_limit_seconds: 60
 
-demo_mode: "true"
+# demo_mode trade-off: when true, the approval gate is AlwaysReject so
+# destructive verbs (delete_pod, run_module, tf_apply, …) get auto-killed
+# even for read-only intents like ``run_module module=command df -h``.
+# Off here so the public demo can show end-to-end ansible/sysadmin
+# execution against the seeded cp + w1 inventory; the approval card in
+# the right sidebar still gates each call, and any allowlisted reviewer
+# would have to actively Approve. A future demo-only chart will pin a
+# tighter read-only-by-construction tool subset and re-enable hard reject.
+demo_mode: "false"
 daily_cost_cap_usd: "5.0"
 
 # Secrets supplied at runtime via --extra-vars (deploy.sh / env.sh).
