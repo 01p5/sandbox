@@ -1,0 +1,4 @@
+# Real hosts.json files contain SSH connection info + key paths —
+# never commit them. Only the .example templates are tracked.
+*.json
+!*.json.example

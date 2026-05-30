@@ -1,0 +1,11 @@
+{
+  "clusters": [
+    {
+      "name": "default",
+      "host": "slurm-controller.example.com",
+      "user": "slurmadm",
+      "key_path": "/etc/olympus/ssh/k8s.pem",
+      "port": 22
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "clusters": [
+    {
+      "name": "gpu-n01",
+      "host": "gpu-n01.example.com",
+      "user": "monitor",
+      "key_path": "/etc/olympus/ssh/k8s.pem",
+      "port": 22,
+      "dcgm_url": "http://gpu-n01.example.com:9400/metrics"
+    }
+  ]
+}

@@ -131,7 +131,57 @@
         --ignore-not-found=true
       changed_when: false
 
-    - name: Render Helm values (auth + hardening)
+    # S1.3 — HPC hosts.json Secret. Optional. Operator drops real
+    # files into inf/hpc-hosts/{slurm-hosts.json,gpu-hosts.json} and
+    # they get mounted into the dashboard pod at /etc/olympus/hpc/.
+    # If either file is absent we still create the Secret (with
+    # whichever files exist) so the volume mount succeeds; missing
+    # keys are tolerated by the slurmlib / gpuwatchlib registries
+    # (Path.exists() false → empty cluster list, no crash).
+    - name: Detect local hpc-hosts files
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../hpc-hosts/{{ item }}"
+      register: hpc_hosts_stat
+      loop:
+        - slurm-hosts.json
+        - gpu-hosts.json
+
+    - name: Stage hpc-hosts files for Secret
+      ansible.builtin.copy:
+        src: "{{ item.stat.path }}"
+        dest: "/tmp/olympus-hpc-hosts/{{ item.item }}"
+        mode: "0600"
+      when: item.stat.exists
+      loop: "{{ hpc_hosts_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Ensure /tmp/olympus-hpc-hosts exists (even if empty)
+      ansible.builtin.file:
+        path: /tmp/olympus-hpc-hosts
+        state: directory
+        mode: "0700"
+
+    - name: Create olympus-hpc-hosts Secret from staged files
+      ansible.builtin.shell: |
+        set -e
+        cd /tmp/olympus-hpc-hosts
+        # --from-file accepts repeated args; build them dynamically so
+        # missing files don't break the kubectl invocation.
+        ARGS=""
+        for f in slurm-hosts.json gpu-hosts.json; do
+          if [ -f "$f" ]; then ARGS="$ARGS --from-file=$f"; fi
+        done
+        kubectl -n {{ olympus_namespace }} create secret generic olympus-hpc-hosts \
+          $ARGS --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: true
+
+    - name: Clean up staged hpc-hosts dir
+      ansible.builtin.file:
+        path: /tmp/olympus-hpc-hosts
+        state: absent
+
+    - name: Render Helm values (auth + hardening + HPC hosts mount)
       ansible.builtin.copy:
         dest: /tmp/olympus-values.yaml
         mode: "0600"
@@ -152,11 +202,27 @@
           hardening:
             demoMode: {{ demo_mode }}
             dailyCostCapUsd: "{{ daily_cost_cap_usd }}"
-          # extraEnv / extraVolumes / extraVolumeMounts intentionally
-          # empty (defaults in values.yaml). The hpc demo ConfigMap
-          # was retired in S1.2 — real slurm-mcp + gpu-mcp ship in
-          # the dashboard image now. S1.3 will repopulate these with
-          # the hosts.json Secret mount once that lands.
+          # HPC hosts.json mount — feeds slurm-mcp + gpu-mcp the
+          # cluster registry the real packages expect. The Secret
+          # is optional; if either key is missing, the corresponding
+          # MCP server starts with an empty cluster list (no crash).
+          # Env-var override (SLURM_MGR_HOSTS / GPU_WATCH_HOSTS) is
+          # how slurmlib / gpuwatchlib find the files outside ~/.
+          extraEnv:
+            - name: SLURM_MGR_HOSTS
+              value: /etc/olympus/hpc/slurm-hosts.json
+            - name: GPU_WATCH_HOSTS
+              value: /etc/olympus/hpc/gpu-hosts.json
+          extraVolumes:
+            - name: hpc-hosts
+              secret:
+                secretName: olympus-hpc-hosts
+                defaultMode: 384  # 0600 — file holds SSH connection info
+                optional: true
+          extraVolumeMounts:
+            - name: hpc-hosts
+              mountPath: /etc/olympus/hpc
+              readOnly: true
       no_log: true
 
     - name: Deploy dashboard (Helm)
