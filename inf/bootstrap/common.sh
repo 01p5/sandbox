@@ -6,6 +6,9 @@
 echo "[olympus] common prereqs $(date -u)"
 export DEBIAN_FRONTEND=noninteractive
 
+# Retry apt — EC2 mirrors are occasionally mid-sync at instance birth.
+aptq() { for i in $(seq 1 8); do apt-get -o Acquire::Retries=3 "$@" && return 0; echo "[apt] retry $i: $*"; sleep 15; done; return 1; }
+
 # kernel modules + sysctls k8s networking needs
 cat >/etc/modules-load.d/k8s.conf <<'EOF'
 overlay
@@ -24,8 +27,8 @@ sysctl --system
 # kubelet refuses to start with swap on (EC2 Ubuntu has none, but be safe)
 swapoff -a || true
 
-apt-get update -y
-apt-get install -y apt-transport-https ca-certificates curl gpg git docker.io
+aptq update
+aptq install -y apt-transport-https ca-certificates curl gpg git docker.io
 systemctl enable --now docker
 
 # containerd configured for the systemd cgroup driver (kubeadm requirement)
@@ -41,8 +44,8 @@ curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" \
   | gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" \
   >/etc/apt/sources.list.d/kubernetes.list
-apt-get update -y
-apt-get install -y kubelet kubeadm kubectl
+aptq update
+aptq install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
 systemctl enable kubelet
 echo "[olympus] common prereqs done $(date -u)"

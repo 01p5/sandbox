@@ -53,13 +53,14 @@ locals {
 }
 
 resource "aws_instance" "control_plane" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.control_plane_instance_type
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.node.id]
-  key_name               = aws_key_pair.node.key_name
-  private_ip             = var.master_private_ip
-  user_data              = local.control_plane_user_data
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.control_plane_instance_type
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.node.id]
+  key_name                    = aws_key_pair.node.key_name
+  private_ip                  = var.master_private_ip
+  user_data                   = local.control_plane_user_data
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_size           = var.root_volume_size
@@ -71,13 +72,14 @@ resource "aws_instance" "control_plane" {
 }
 
 resource "aws_instance" "worker" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.worker_instance_type
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.node.id]
-  key_name               = aws_key_pair.node.key_name
-  private_ip             = var.worker_private_ip
-  user_data              = local.worker_user_data
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.worker_instance_type
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.node.id]
+  key_name                    = aws_key_pair.node.key_name
+  private_ip                  = var.worker_private_ip
+  user_data                   = local.worker_user_data
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_size           = var.root_volume_size

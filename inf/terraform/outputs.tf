@@ -25,5 +25,5 @@ output "bootstrap_log_hint" {
 
 output "dns_record" {
   description = "Whether Terraform is managing the Cloudflare DNS record."
-  value       = var.cloudflare_api_token != "" ? "${var.dns_hostname} A -> ${aws_eip.control_plane.public_ip} (DNS-only)" : "unmanaged — set TF_VAR_cloudflare_api_token or point DNS by hand"
+  value       = length(cloudflare_record.dashboard) > 0 ? "${var.dns_hostname} A -> ${aws_eip.control_plane.public_ip} (DNS-only)" : "unmanaged — set TF_VAR_cloudflare_api_token or point DNS by hand"
 }
