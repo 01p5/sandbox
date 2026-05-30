@@ -13,6 +13,14 @@ olympus_release: "olympus"
 image_tag: "llm"
 olympus_router: "manual" # or "llm" (needs a provider key)
 
+# S2.E1 — sibling sub-dashboards (slurm-mgr + gpu-watch). Each is
+# built into its own image on the worker (build-{slurm,gpu}-dashboard.sh)
+# and deployed alongside Olympus when the respective subchart is enabled.
+slurm_mgr_repo_url: "https://github.com/01p5/slurm-mgr.git"
+slurm_mgr_repo_ref: "main"
+gpu_watch_repo_url: "https://github.com/01p5/gpu-watch.git"
+gpu_watch_repo_ref: "main"
+
 dns_hostname: "0lympu5.com"
 certbot_email: "admin@01p5.com"
 certbot_staging: "0" # "1" for Let's Encrypt staging while iterating

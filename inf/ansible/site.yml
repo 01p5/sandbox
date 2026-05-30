@@ -203,17 +203,34 @@
           hardening:
             demoMode: {{ demo_mode }}
             dailyCostCapUsd: "{{ daily_cost_cap_usd }}"
+          # S2.E1 — sibling dashboards. The chart's subcharts spin up
+          # slurm-dashboard + gpu-dashboard pods + ClusterIP services
+          # in this namespace; Olympus reverse-proxies /slurm/* and
+          # /gpu/* into them via OLYMPUS_PROXY_*_URL below.
+          slurmDashboard:
+            enabled: true
+          gpuDashboard:
+            enabled: true
           # HPC hosts.json mount — feeds slurm-mcp + gpu-mcp the
-          # cluster registry the real packages expect. The Secret
-          # is optional; if either key is missing, the corresponding
-          # MCP server starts with an empty cluster list (no crash).
-          # Env-var override (SLURM_MGR_HOSTS / GPU_WATCH_HOSTS) is
-          # how slurmlib / gpuwatchlib find the files outside ~/.
+          # cluster registry the real packages expect (S1.3). The
+          # Secret is optional; if either key is missing, the
+          # corresponding MCP server starts with an empty cluster
+          # list (no crash). Env-var override (SLURM_MGR_HOSTS /
+          # GPU_WATCH_HOSTS) is how slurmlib / gpuwatchlib find
+          # files outside ~/.
           extraEnv:
             - name: SLURM_MGR_HOSTS
               value: /etc/olympus/hpc/slurm-hosts.json
             - name: GPU_WATCH_HOSTS
               value: /etc/olympus/hpc/gpu-hosts.json
+            # S2.C2 — reverse-proxy targets for the sibling dashboards.
+            # The chart's slurm-dashboard.yaml + gpu-dashboard.yaml
+            # name the services <release>-olympus-{slurm,gpu}-dashboard
+            # so Olympus's in-cluster DNS resolves them by short name.
+            - name: OLYMPUS_PROXY_SLURM_URL
+              value: "http://{{ olympus_release }}-olympus-slurm-dashboard:8770"
+            - name: OLYMPUS_PROXY_GPU_URL
+              value: "http://{{ olympus_release }}-olympus-gpu-dashboard:8780"
           extraVolumes:
             - name: hpc-hosts
               secret:
@@ -302,6 +319,27 @@
         OLYMPUS_REPO_URL: "{{ olympus_repo_url }}"
         OLYMPUS_REPO_REF: "{{ olympus_repo_ref }}"
         IMAGE_TAG: "{{ image_tag }}"
+
+    # S2.E1 — sibling dashboards. Built from the public slurm-mgr +
+    # gpu-watch repos at the pinned refs (group_vars/all.yml). Same
+    # fast-path-skip-if-unchanged pattern as build-image.sh.
+    - name: Build + import slurm-dashboard image
+      ansible.builtin.script: files/build-slurm-dashboard.sh
+      args:
+        executable: /bin/bash
+      environment:
+        SLURM_MGR_REPO_URL: "{{ slurm_mgr_repo_url }}"
+        SLURM_MGR_REF: "{{ slurm_mgr_repo_ref }}"
+        IMAGE_TAG: "dev"
+
+    - name: Build + import gpu-dashboard image
+      ansible.builtin.script: files/build-gpu-dashboard.sh
+      args:
+        executable: /bin/bash
+      environment:
+        GPU_WATCH_REPO_URL: "{{ gpu_watch_repo_url }}"
+        GPU_WATCH_REF: "{{ gpu_watch_repo_ref }}"
+        IMAGE_TAG: "dev"
 
     - name: Join the cluster
       ansible.builtin.command: "{{ hostvars[groups['control_plane'][0]].kube_join_command }}"
