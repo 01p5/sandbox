@@ -71,6 +71,18 @@ cd ../ansible
 ansible-playbook site.yml
 #   optional LLM agents:
 #     ansible-playbook site.yml -e olympus_router=llm -e openai_api_key=sk-...
+#
+#   full public-demo wiring (auth + email-OTP + hardening):
+#     source ../env.sh                                  # see env.sh.template
+#     ansible-playbook site.yml \
+#         -e olympus_router=llm \
+#         -e openai_api_key="$OPENAI_API_KEY" \
+#         -e session_secret="$OLYMPUS_SESSION_SECRET" \
+#         -e google_client_id="$OLYMPUS_GOOGLE_CLIENT_ID" \
+#         -e google_client_secret="$OLYMPUS_GOOGLE_CLIENT_SECRET" \
+#         -e smtp_host="$OLYMPUS_SMTP_HOST" \
+#         -e smtp_username="$OLYMPUS_SMTP_USERNAME" \
+#         -e smtp_password="$OLYMPUS_SMTP_PASSWORD"
 ```
 
 `terraform apply` takes a couple of minutes. `ansible-playbook` then runs

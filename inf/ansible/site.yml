@@ -86,13 +86,23 @@
       register: ns
       changed_when: "'created' in ns.stdout"
 
-    - name: Provider-key secret (only if a key was supplied)
+    - name: Provider-key + auth secret (only if any are supplied)
       ansible.builtin.shell: >
         kubectl -n {{ olympus_namespace }} create secret generic {{ olympus_release }}-secrets
-        {% if openai_api_key | length > 0 %}--from-literal=openai_api_key={{ openai_api_key }}{% endif %}
-        {% if anthropic_api_key | length > 0 %}--from-literal=anthropic_api_key={{ anthropic_api_key }}{% endif %}
+        {% if openai_api_key       | length > 0 %}--from-literal=openai_api_key={{ openai_api_key }}{% endif %}
+        {% if anthropic_api_key    | length > 0 %}--from-literal=anthropic_api_key={{ anthropic_api_key }}{% endif %}
+        {% if session_secret       | length > 0 %}--from-literal=session_secret={{ session_secret }}{% endif %}
+        {% if google_client_id     | length > 0 %}--from-literal=google_client_id={{ google_client_id }}{% endif %}
+        {% if google_client_secret | length > 0 %}--from-literal=google_client_secret={{ google_client_secret }}{% endif %}
+        {% if smtp_password        | length > 0 %}--from-literal=smtp_password={{ smtp_password }}{% endif %}
         --dry-run=client -o yaml | kubectl apply -f -
-      when: (openai_api_key | length > 0) or (anthropic_api_key | length > 0)
+      when: >
+        (openai_api_key       | length > 0) or
+        (anthropic_api_key    | length > 0) or
+        (session_secret       | length > 0) or
+        (google_client_id     | length > 0) or
+        (google_client_secret | length > 0) or
+        (smtp_password        | length > 0)
       no_log: true
       changed_when: true
 
@@ -108,6 +118,20 @@
         --set service.port=80
         --set service.targetPort=8765
         --set secrets.sshPrivateKeyKey=
+        --set auth.bypass={{ auth_bypass }}
+        --set 'auth.allowedDomains={{ auth_allowed_domains }}'
+        --set auth.redirectBaseUrl={{ auth_redirect_base_url }}
+        --set auth.cookieSecure={{ auth_cookie_secure }}
+        --set auth.sessionTtlSeconds={{ auth_session_ttl_seconds }}
+        --set auth.smtpHost={{ smtp_host }}
+        --set auth.smtpPort={{ smtp_port }}
+        --set auth.smtpUsername={{ smtp_username }}
+        --set auth.smtpFrom={{ smtp_from }}
+        --set auth.smtpStarttls={{ smtp_starttls }}
+        --set auth.otpTtlSeconds={{ otp_ttl_seconds }}
+        --set auth.otpRateLimitSeconds={{ otp_rate_limit_seconds }}
+        --set hardening.demoMode={{ demo_mode }}
+        --set hardening.dailyCostCapUsd={{ daily_cost_cap_usd }}
       register: helmout
       changed_when: "'has been upgraded' in helmout.stdout or 'has been installed' in helmout.stdout"
 

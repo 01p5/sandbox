@@ -21,3 +21,31 @@ certbot_staging: "0" # "1" for Let's Encrypt staging while iterating
 # optional secret keys are simply omitted.
 openai_api_key: ""
 anthropic_api_key: ""
+
+# Auth + hardening (chart maps these onto OLYMPUS_AUTH_* / OLYMPUS_DEMO_*
+# envs on the dashboard pod). Defaults are demo-safe for the public
+# 0lympu5.com deploy: bypass off, allowlist Stanford + tianleyu, redirect
+# back to the public hostname, demo_mode on so destructive verbs auto-reject.
+auth_bypass: "false"
+auth_allowed_domains: "stanford.edu,tianleyu.com"
+auth_redirect_base_url: "https://{{ dns_hostname }}"
+auth_cookie_secure: "true"
+auth_session_ttl_seconds: 604800
+
+smtp_host: ""
+smtp_port: 587
+smtp_username: ""
+smtp_from: "noreply@{{ dns_hostname }}"
+smtp_starttls: "true"
+otp_ttl_seconds: 600
+otp_rate_limit_seconds: 60
+
+demo_mode: "true"
+daily_cost_cap_usd: "5.0"
+
+# Secrets supplied at runtime via --extra-vars (deploy.sh / env.sh).
+# Empty defaults so the chart leaves the corresponding env unset.
+session_secret: ""
+google_client_id: ""
+google_client_secret: ""
+smtp_password: ""
