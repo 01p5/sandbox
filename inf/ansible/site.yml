@@ -106,10 +106,34 @@
       no_log: true
       changed_when: true
 
+    - name: Render Helm values (auth + hardening — avoids --set comma quoting)
+      ansible.builtin.copy:
+        dest: /tmp/olympus-values.yaml
+        mode: "0600"
+        content: |
+          auth:
+            bypass: {{ auth_bypass }}
+            allowedDomains: "{{ auth_allowed_domains }}"
+            redirectBaseUrl: "{{ auth_redirect_base_url }}"
+            cookieSecure: {{ auth_cookie_secure }}
+            sessionTtlSeconds: {{ auth_session_ttl_seconds }}
+            smtpHost: "{{ smtp_host }}"
+            smtpPort: {{ smtp_port }}
+            smtpUsername: "{{ smtp_username }}"
+            smtpFrom: "{{ smtp_from }}"
+            smtpStarttls: {{ smtp_starttls }}
+            otpTtlSeconds: {{ otp_ttl_seconds }}
+            otpRateLimitSeconds: {{ otp_rate_limit_seconds }}
+          hardening:
+            demoMode: {{ demo_mode }}
+            dailyCostCapUsd: "{{ daily_cost_cap_usd }}"
+      no_log: true
+
     - name: Deploy dashboard (Helm)
       ansible.builtin.command: >
         helm upgrade --install {{ olympus_release }} /opt/olympus-src/infra/k8s/charts/olympus
         --namespace {{ olympus_namespace }}
+        --values /tmp/olympus-values.yaml
         --set image.repository=olympus/dashboard
         --set image.tag={{ image_tag }}
         --set image.pullPolicy=Never
@@ -118,20 +142,6 @@
         --set service.port=80
         --set service.targetPort=8765
         --set secrets.sshPrivateKeyKey=
-        --set auth.bypass={{ auth_bypass }}
-        --set 'auth.allowedDomains={{ auth_allowed_domains }}'
-        --set auth.redirectBaseUrl={{ auth_redirect_base_url }}
-        --set auth.cookieSecure={{ auth_cookie_secure }}
-        --set auth.sessionTtlSeconds={{ auth_session_ttl_seconds }}
-        --set auth.smtpHost={{ smtp_host }}
-        --set auth.smtpPort={{ smtp_port }}
-        --set auth.smtpUsername={{ smtp_username }}
-        --set auth.smtpFrom={{ smtp_from }}
-        --set auth.smtpStarttls={{ smtp_starttls }}
-        --set auth.otpTtlSeconds={{ otp_ttl_seconds }}
-        --set auth.otpRateLimitSeconds={{ otp_rate_limit_seconds }}
-        --set hardening.demoMode={{ demo_mode }}
-        --set hardening.dailyCostCapUsd={{ daily_cost_cap_usd }}
       register: helmout
       changed_when: "'has been upgraded' in helmout.stdout or 'has been installed' in helmout.stdout"
 
@@ -201,3 +211,26 @@
       ansible.builtin.command: "{{ hostvars[groups['control_plane'][0]].kube_join_command }}"
       args:
         creates: /etc/kubernetes/kubelet.conf
+
+# ----------------------------------------------------------------------------
+# 4) Roll the dashboard pod after the worker rebuilt the :llm image.
+#    `pullPolicy=Never` + same tag means helm sees no diff; we have to
+#    force the rollout ourselves so the new local image bytes get used.
+# ----------------------------------------------------------------------------
+- name: Roll the dashboard to pick up the freshly-built image
+  hosts: control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Rollout restart deployment/{{ olympus_release }}-olympus
+      ansible.builtin.command: >
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {{ olympus_namespace }}
+        rollout restart deployment/{{ olympus_release }}-olympus
+      register: rollout
+      changed_when: "'restarted' in rollout.stdout"
+
+    - name: Wait for the new pod to become Ready
+      ansible.builtin.command: >
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {{ olympus_namespace }}
+        rollout status deployment/{{ olympus_release }}-olympus --timeout=180s
+      changed_when: false
