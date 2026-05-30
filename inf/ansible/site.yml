@@ -86,9 +86,23 @@
       register: ns
       changed_when: "'created' in ns.stdout"
 
-    - name: Provider-key + auth secret (only if any are supplied)
+    # Stage the cluster's SSH private key onto the cp host so the secret
+    # task below can ship it as ``ssh_k8s_pem`` (the chart mounts that
+    # at /etc/olympus/ssh/k8s.pem, mode 0600). The dashboard's
+    # ``olympus-inventory`` bootstrap (Play 5) reads it from there and
+    # writes it into the user-managed inventory store so the sysadmin /
+    # ansible agents can ssh between cluster nodes from inside the pod.
+    - name: Stage k8s.pem on cp for secret creation
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../deployment/k8s.pem"
+        dest: /tmp/olympus-bootstrap-k8s-pem
+        mode: "0600"
+      no_log: true
+
+    - name: Provider-key + auth secret (always, includes ssh key for bootstrap)
       ansible.builtin.shell: >
         kubectl -n {{ olympus_namespace }} create secret generic {{ olympus_release }}-secrets
+        --from-file=ssh_k8s_pem=/tmp/olympus-bootstrap-k8s-pem
         {% if openai_api_key       | length > 0 %}--from-literal=openai_api_key={{ openai_api_key }}{% endif %}
         {% if anthropic_api_key    | length > 0 %}--from-literal=anthropic_api_key={{ anthropic_api_key }}{% endif %}
         {% if session_secret       | length > 0 %}--from-literal=session_secret={{ session_secret }}{% endif %}
@@ -96,15 +110,14 @@
         {% if google_client_secret | length > 0 %}--from-literal=google_client_secret={{ google_client_secret }}{% endif %}
         {% if smtp_password        | length > 0 %}--from-literal=smtp_password={{ smtp_password }}{% endif %}
         --dry-run=client -o yaml | kubectl apply -f -
-      when: >
-        (openai_api_key       | length > 0) or
-        (anthropic_api_key    | length > 0) or
-        (session_secret       | length > 0) or
-        (google_client_id     | length > 0) or
-        (google_client_secret | length > 0) or
-        (smtp_password        | length > 0)
       no_log: true
       changed_when: true
+
+    - name: Clean up staged k8s.pem
+      ansible.builtin.file:
+        path: /tmp/olympus-bootstrap-k8s-pem
+        state: absent
+      no_log: true
 
     - name: Render Helm values (auth + hardening — avoids --set comma quoting)
       ansible.builtin.copy:
@@ -141,7 +154,6 @@
         --set service.type=NodePort
         --set service.port=80
         --set service.targetPort=8765
-        --set secrets.sshPrivateKeyKey=
       register: helmout
       changed_when: "'has been upgraded' in helmout.stdout or 'has been installed' in helmout.stdout"
 
@@ -234,3 +246,90 @@
         kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {{ olympus_namespace }}
         rollout status deployment/{{ olympus_release }}-olympus --timeout=180s
       changed_when: false
+
+# ----------------------------------------------------------------------------
+# 5) Seed the user-managed inventory store with this cluster's own hosts.
+#    Idempotent: only seeds when the inventory file is empty (a fresh
+#    install / a wiped PVC), so subsequent runs preserve user edits.
+#    The dashboard pod runs olympus-inventory against /var/lib/olympus
+#    (same mounted dir as the audit log) + reads the cluster SSH key
+#    from /etc/olympus/ssh/k8s.pem (mounted by the chart via the
+#    ssh_k8s_pem Secret key the previous play populated).
+# ----------------------------------------------------------------------------
+- name: Bootstrap Olympus inventory (cp + w1 + cluster ssh key)
+  hosts: control_plane
+  become: true
+  gather_facts: false
+  vars:
+    _kubectl_exec_prefix: >-
+      kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {{ olympus_namespace }}
+      exec deploy/{{ olympus_release }}-olympus --
+  tasks:
+    - name: Check whether inventory is already populated
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ _kubectl_exec_prefix }} olympus-inventory \
+          --store /var/lib/olympus/inventory.json list-hosts 2>&1 \
+          | head -1
+      register: inv_check
+      changed_when: false
+      failed_when: false
+
+    - name: Seed cluster SSH key (only when inventory is empty)
+      ansible.builtin.command: >
+        {{ _kubectl_exec_prefix }}
+        olympus-inventory --store /var/lib/olympus/inventory.json
+        add-key --name cluster --file /etc/olympus/ssh/k8s.pem
+      when: "'(no hosts)' in inv_check.stdout"
+      register: seed_key
+      changed_when: "'added key' in seed_key.stdout"
+      failed_when:
+        - seed_key.rc != 0
+        - "'already exists' not in seed_key.stderr"
+
+    - name: Seed cp host
+      ansible.builtin.command: >
+        {{ _kubectl_exec_prefix }}
+        olympus-inventory --store /var/lib/olympus/inventory.json
+        add-host --name cp
+        --address {{ hostvars[groups['control_plane'][0]].node_ip }}
+        --ssh-user ubuntu --key cluster
+        --group control_plane
+        --var role=control_plane
+        --description "Auto-bootstrapped: this cluster's control plane node"
+      when: "'(no hosts)' in inv_check.stdout"
+      register: seed_cp
+      changed_when: "'added host' in seed_cp.stdout"
+      failed_when:
+        - seed_cp.rc != 0
+        - "'already exists' not in seed_cp.stderr"
+
+    - name: Seed w1 host
+      ansible.builtin.command: >
+        {{ _kubectl_exec_prefix }}
+        olympus-inventory --store /var/lib/olympus/inventory.json
+        add-host --name w1
+        --address {{ hostvars[groups['workers'][0]].node_ip }}
+        --ssh-user ubuntu --key cluster
+        --group workers
+        --var role=worker
+        --description "Auto-bootstrapped: this cluster's worker node"
+      when: "'(no hosts)' in inv_check.stdout"
+      register: seed_w1
+      changed_when: "'added host' in seed_w1.stdout"
+      failed_when:
+        - seed_w1.rc != 0
+        - "'already exists' not in seed_w1.stderr"
+
+    - name: Confirm the inventory after bootstrap
+      ansible.builtin.command: >
+        {{ _kubectl_exec_prefix }}
+        olympus-inventory --store /var/lib/olympus/inventory.json list-hosts
+      register: inv_final
+      changed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: |
+          Olympus inventory after bootstrap:
+          {{ inv_final.stdout }}
