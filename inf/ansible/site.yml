@@ -265,22 +265,18 @@
       kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {{ olympus_namespace }}
       exec deploy/{{ olympus_release }}-olympus --
   tasks:
-    - name: Check whether inventory is already populated
-      ansible.builtin.shell: |
-        set -o pipefail
-        {{ _kubectl_exec_prefix }} olympus-inventory \
-          --store /var/lib/olympus/inventory.json list-hosts 2>&1 \
-          | head -1
-      register: inv_check
-      changed_when: false
-      failed_when: false
-
-    - name: Seed cluster SSH key (only when inventory is empty)
+    # Idempotent-by-CLI: olympus-inventory returns rc=1 + "already exists"
+    # on duplicate add. failed_when tolerates that, and changed_when looks
+    # for the success path ("added key" / "added host"), so a re-run is
+    # a no-op (ok=3 changed=0) without needing a separate guard task.
+    # Earlier-attempt note: a `kubectl exec ... 2>&1 | head -1` precheck
+    # accidentally captured kubectl's "Defaulted container" stderr line as
+    # the first line, so the seed-when guard always evaluated false.
+    - name: Seed cluster SSH key
       ansible.builtin.command: >
         {{ _kubectl_exec_prefix }}
         olympus-inventory --store /var/lib/olympus/inventory.json
         add-key --name cluster --file /etc/olympus/ssh/k8s.pem
-      when: "'(no hosts)' in inv_check.stdout"
       register: seed_key
       changed_when: "'added key' in seed_key.stdout"
       failed_when:
@@ -297,7 +293,6 @@
         --group control_plane
         --var role=control_plane
         --description "Auto-bootstrapped: this cluster's control plane node"
-      when: "'(no hosts)' in inv_check.stdout"
       register: seed_cp
       changed_when: "'added host' in seed_cp.stdout"
       failed_when:
@@ -314,7 +309,6 @@
         --group workers
         --var role=worker
         --description "Auto-bootstrapped: this cluster's worker node"
-      when: "'(no hosts)' in inv_check.stdout"
       register: seed_w1
       changed_when: "'added host' in seed_w1.stdout"
       failed_when:
