@@ -368,18 +368,30 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Rollout restart deployment/{{ olympus_release }}-olympus
+    - name: Rollout restart deployments (Olympus + sibling dashboards)
       ansible.builtin.command: >
         kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {{ olympus_namespace }}
-        rollout restart deployment/{{ olympus_release }}-olympus
+        rollout restart deployment/{{ item }}
       register: rollout
       changed_when: "'restarted' in rollout.stdout"
+      # pullPolicy=Never + same tag means helm sees no diff; the only
+      # way the kubelet picks up freshly-imported image bytes is via
+      # an explicit rollout restart. Sibling deployments share the
+      # same lifecycle.
+      loop:
+        - "{{ olympus_release }}-olympus"
+        - "{{ olympus_release }}-olympus-slurm-dashboard"
+        - "{{ olympus_release }}-olympus-gpu-dashboard"
 
-    - name: Wait for the new pod to become Ready
+    - name: Wait for each deployment to be Ready
       ansible.builtin.command: >
         kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {{ olympus_namespace }}
-        rollout status deployment/{{ olympus_release }}-olympus --timeout=180s
+        rollout status deployment/{{ item }} --timeout=180s
       changed_when: false
+      loop:
+        - "{{ olympus_release }}-olympus"
+        - "{{ olympus_release }}-olympus-slurm-dashboard"
+        - "{{ olympus_release }}-olympus-gpu-dashboard"
 
 # ----------------------------------------------------------------------------
 # 5) Seed the user-managed inventory store with this cluster's own hosts.
