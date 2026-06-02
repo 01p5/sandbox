@@ -51,7 +51,7 @@ resource "aws_security_group" "netdb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
-    description = "DNS (TCP) — zone transfers / large responses"
+    description = "DNS (TCP) - zone transfers / large responses"
     from_port   = 53
     to_port     = 53
     protocol    = "tcp"
