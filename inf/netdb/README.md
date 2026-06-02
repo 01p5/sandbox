@@ -21,7 +21,8 @@ empty ⇒ no netdb MCP server wired).
    cloudflare_zone_name = "example.com"
    cloudflare_zone_id   = "<your-zone-id>"
    admin_cidr           = "<your-ip>/32"      # SSH + Technitium console
-   mcp_ingress_cidr     = "<cluster-eip>/32"  # who can drive netdb /mcp
+   # mcp_ingress_cidrs is auto-derived from the cluster inventory by
+   # `deploy.sh netdb-up` — :8080 (no auth) is locked to the cluster.
    ```
 2. **Creds** in `inf/env.sh`: `TF_VAR_cloudflare_api_token` (Zone:DNS:Edit),
    `DNS_SERVER_ADMIN_PASSWORD` (Technitium admin), optional

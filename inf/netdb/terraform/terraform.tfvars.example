@@ -13,8 +13,10 @@ ns_hostname          = "ns1.lab.example.com"
 cloudflare_zone_name = "example.com"
 cloudflare_zone_id   = "<your-cloudflare-zone-id>" # zone Overview page
 
-# Lock these down for a real deployment:
-#   admin_cidr       = "<your-ip>/32"       # SSH + Technitium console (5380)
-#   mcp_ingress_cidr = "<cluster-eip>/32"   # who can drive netdb /mcp (8080)
-admin_cidr       = "0.0.0.0/0"
-mcp_ingress_cidr = "0.0.0.0/0"
+# netdb's :8080 (MCP) has no auth + write tools — it MUST be locked to your
+# cluster's egress IP(s). `deploy.sh netdb-up` sets mcp_ingress_cidrs from the
+# cluster inventory automatically; set it here only if running terraform by hand.
+#   mcp_ingress_cidrs = ["<cluster-cp-ip>/32", "<cluster-worker-ip>/32"]
+#   admin_cidr        = "<your-ip>/32"   # SSH + Technitium console (5380)
+admin_cidr        = "0.0.0.0/0"
+mcp_ingress_cidrs = ["0.0.0.0/0"]

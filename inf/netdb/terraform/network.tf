@@ -58,14 +58,16 @@ resource "aws_security_group" "netdb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # netdb HTTP UI + /mcp — Olympus reaches this. Lock to the cluster IP(s)
-  # in prod; netdb basic-auth is the backstop when left open.
+  # netdb HTTP UI + /mcp. Has NO auth and exposes destructive write tools, so
+  # it MUST be locked to the Olympus cluster's egress IP(s) — otherwise anyone
+  # could drive netdb directly, bypassing Olympus's approval queue. deploy.sh
+  # netdb-up derives these from the cluster inventory automatically.
   ingress {
-    description = "netdb HTTP + MCP"
+    description = "netdb HTTP + MCP (cluster only)"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
-    cidr_blocks = [var.mcp_ingress_cidr]
+    cidr_blocks = var.mcp_ingress_cidrs
   }
 
   # SSH (Ansible) + Technitium admin console — operator only.

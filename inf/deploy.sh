@@ -88,6 +88,20 @@ netdb_up() {
   # One-time bring-up of the persistent NetDB / Technitium / Kea server.
   # SEPARATE terraform state from the cluster, so cluster --fresh never
   # destroys it. Idempotent: re-running applies + re-provisions in place.
+  # Lock netdb's :8080 (no auth, write tools) to the cluster's public egress
+  # IPs, derived from the cluster inventory. Without this it'd be internet-open
+  # and bypass Olympus's approval queue.
+  local inv="${HERE}/deployment/inventory.ini" cidrs
+  if [[ -f "$inv" ]]; then
+    cidrs=$(awk '{for(i=1;i<=NF;i++) if($i ~ /^ansible_host=/){split($i,a,"="); printf "\"%s/32\",", a[2]}}' "$inv")
+    cidrs="[${cidrs%,}]"
+    if [[ "$cidrs" != "[]" ]]; then
+      export TF_VAR_mcp_ingress_cidrs="$cidrs"
+      green "✓ netdb :8080 will be locked to the cluster: $cidrs"
+    fi
+  fi
+  [[ -n "${TF_VAR_mcp_ingress_cidrs:-}" ]] || red "  warning: no cluster inventory found — netdb :8080 falls back to its var default; lock it via terraform.tfvars"
+
   step "terraform apply — NetDB/DNS server (VPC, EC2 ×1, EIP, Cloudflare NS delegation)"
   # TF_VAR_cloudflare_api_token is already exported by inf/env.sh.
   ( cd "$NETDB_TF_DIR" \

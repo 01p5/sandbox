@@ -50,10 +50,10 @@ variable "admin_cidr" {
   default     = "0.0.0.0/0"
 }
 
-variable "mcp_ingress_cidr" {
-  type        = string
-  description = "CIDR allowed to reach netdb's HTTP/MCP port (8080). Set to the Olympus cluster's public IP(s) so only it can drive the IPAM tools. Defaults open (netdb basic-auth is the backstop)."
-  default     = "0.0.0.0/0"
+variable "mcp_ingress_cidrs" {
+  type        = list(string)
+  description = "CIDRs allowed to reach netdb's HTTP/MCP port (8080) — your Olympus cluster's egress IP(s). netdb's MCP has no auth and exposes write tools, so this MUST be the cluster, NOT 0.0.0.0/0. deploy.sh netdb-up sets it from the cluster inventory."
+  default     = ["0.0.0.0/0"]
 }
 
 # --- DNS / delegation ---
