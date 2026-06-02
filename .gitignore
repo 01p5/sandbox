@@ -12,6 +12,13 @@ inf/terraform/crash.log
 # Real tfvars may carry provider keys — keep only the .example committed.
 inf/terraform/terraform.tfvars
 inf/terraform/*.auto.tfvars
+# NetDB / DNS-server terraform (separate root + state) + its keys/inventory
+inf/netdb/terraform/.terraform/
+inf/netdb/terraform/.terraform.lock.hcl
+inf/netdb/terraform/*.tfstate
+inf/netdb/terraform/*.tfstate.*
+inf/netdb/terraform/terraform.tfvars
+inf/netdb/deployment/
 # webfront runtime state (certs/challenges) — only created on the node.
 inf/webfront/certbot/
 .DS_Store
