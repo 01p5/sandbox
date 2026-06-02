@@ -78,10 +78,12 @@ variable "web_ingress_cidr" {
 }
 
 # --- DNS ---
+# Set these to YOUR domain (via env.sh / TF_VAR_*). The placeholder default is
+# example.com so a stray apply can't point at someone else's zone.
 variable "dns_hostname" {
   type        = string
-  description = "Hostname the demo is served at (DNS A-record + cert CN)."
-  default     = "0lympu5.com"
+  description = "Hostname the demo is served at (DNS A-record + cert CN). Set to your own, e.g. olympus.example.com."
+  default     = "olympus.example.com"
 }
 
 variable "cloudflare_api_token" {
@@ -93,6 +95,6 @@ variable "cloudflare_api_token" {
 
 variable "cloudflare_zone_id" {
   type        = string
-  description = "Cloudflare zone id for the domain (not secret)."
-  default     = "63b9172374ab880f8fe2f2311f05dc6e" # 0lympu5.com
+  description = "Cloudflare zone id for YOUR domain (not secret; find it on the zone's Overview page). Required when managing DNS."
+  default     = ""
 }

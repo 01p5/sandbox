@@ -21,8 +21,10 @@ slurm_mgr_repo_ref: "main"
 gpu_watch_repo_url: "https://github.com/01p5/gpu-watch.git"
 gpu_watch_repo_ref: "main"
 
-dns_hostname: "0lympu5.com"
-certbot_email: "admin@01p5.com"
+# Set these to your own domain. deploy.sh overrides them from env.sh
+# (DEPLOY_DNS_HOSTNAME / DEPLOY_CERTBOT_EMAIL) so the public repo stays generic.
+dns_hostname: "olympus.example.com"
+certbot_email: "admin@example.com"
 
 # NetDB (IPAM/DNS/DHCP) — optional, wired into Olympus's sysadmin agent over
 # MCP. Stand up the persistent DNS server with `deploy.sh netdb-up` (see
@@ -38,11 +40,12 @@ openai_api_key: ""
 anthropic_api_key: ""
 
 # Auth + hardening (chart maps these onto OLYMPUS_AUTH_* / OLYMPUS_DEMO_*
-# envs on the dashboard pod). Defaults are demo-safe for the public
-# 0lympu5.com deploy: bypass off, allowlist Stanford + tianleyu, redirect
-# back to the public hostname, demo_mode on so destructive verbs auto-reject.
+# envs on the dashboard pod). Demo-safe defaults: login bypass off, redirect
+# back to the configured hostname. Set auth_allowed_domains to YOUR domain(s)
+# (comma-separated) via env.sh (DEPLOY_AUTH_ALLOWED_DOMAINS); "*" allows any
+# authenticated email. Empty here so a reproducer must opt in explicitly.
 auth_bypass: "false"
-auth_allowed_domains: "stanford.edu,tianleyu.com"
+auth_allowed_domains: ""
 auth_redirect_base_url: "https://{{ dns_hostname }}"
 auth_cookie_secure: "true"
 auth_session_ttl_seconds: 604800

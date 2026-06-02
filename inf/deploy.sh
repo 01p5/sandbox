@@ -59,24 +59,37 @@ ansible_deploy() {
   # write it). Bail clearly so the user can fix.
   [[ -f "${HERE}/deployment/inventory.ini" ]] \
     || fail "${HERE}/deployment/inventory.ini missing — run ./inf/deploy.sh apply first"
-  ( cd "$ANSIBLE_DIR" && ansible-playbook site.yml \
-      -e session_secret="${OLYMPUS_SESSION_SECRET:-}" \
-      -e google_client_id="${OLYMPUS_GOOGLE_CLIENT_ID:-}" \
-      -e google_client_secret="${OLYMPUS_GOOGLE_CLIENT_SECRET:-}" \
-      -e smtp_host="${OLYMPUS_SMTP_HOST:-}" \
-      -e smtp_username="${OLYMPUS_SMTP_USERNAME:-}" \
-      -e smtp_password="${OLYMPUS_SMTP_PASSWORD:-}" \
-      -e smtp_from="${OLYMPUS_SMTP_FROM:-}" \
-      -e openai_api_key="${OPENAI_API_KEY:-}" \
-      -e anthropic_api_key="${ANTHROPIC_API_KEY:-}" \
-      -e olympus_router=llm \
-  ) 2>&1 | tee /tmp/olympus-deploy-ansible.log
-  green "✓ ansible complete"
+  # Deploy params come from env.sh so the committed group_vars stay generic
+  # (example.com). Anything unset falls back to the group_vars default.
+  #   - router defaults to "manual" (no LLM key needed); set OLYMPUS_ROUTER=llm
+  #     once you've set a provider key to exercise the LLM-driven agents.
+  #   - host / email / allowlist come from the DEPLOY_* / TF_VAR_dns_hostname env.
+  local router="${OLYMPUS_ROUTER:-manual}"
+  local extra=(
+    -e "olympus_router=${router}"
+    -e "session_secret=${OLYMPUS_SESSION_SECRET:-}"
+    -e "google_client_id=${OLYMPUS_GOOGLE_CLIENT_ID:-}"
+    -e "google_client_secret=${OLYMPUS_GOOGLE_CLIENT_SECRET:-}"
+    -e "smtp_host=${OLYMPUS_SMTP_HOST:-}"
+    -e "smtp_username=${OLYMPUS_SMTP_USERNAME:-}"
+    -e "smtp_password=${OLYMPUS_SMTP_PASSWORD:-}"
+    -e "smtp_from=${OLYMPUS_SMTP_FROM:-}"
+    -e "openai_api_key=${OPENAI_API_KEY:-${TF_VAR_openai_api_key:-}}"
+    -e "anthropic_api_key=${ANTHROPIC_API_KEY:-${TF_VAR_anthropic_api_key:-}}"
+  )
+  # Only override the generic group_vars defaults when the operator set them.
+  [[ -n "${TF_VAR_dns_hostname:-}" ]]        && extra+=(-e "dns_hostname=${TF_VAR_dns_hostname}")
+  [[ -n "${DEPLOY_CERTBOT_EMAIL:-}" ]]       && extra+=(-e "certbot_email=${DEPLOY_CERTBOT_EMAIL}")
+  [[ -n "${DEPLOY_AUTH_ALLOWED_DOMAINS:-}" ]] && extra+=(-e "auth_allowed_domains=${DEPLOY_AUTH_ALLOWED_DOMAINS}")
+  ( cd "$ANSIBLE_DIR" && ansible-playbook site.yml "${extra[@]}" ) \
+    2>&1 | tee /tmp/olympus-deploy-ansible.log
+  green "✓ ansible complete (router=${router})"
 }
 
 verify_live() {
   step "verify live"
-  local host="${TF_VAR_dns_hostname:-0lympu5.com}"
+  local host="${TF_VAR_dns_hostname:-}"
+  [[ -n "$host" ]] || { red "  TF_VAR_dns_hostname unset — skipping live check (set it in env.sh)"; return 0; }
   if curl --max-time 10 -sf "https://${host}/healthz" >/dev/null; then
     green "✓ https://${host}/healthz returns 200"
   else
