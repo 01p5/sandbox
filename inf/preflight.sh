@@ -85,7 +85,10 @@ else
     zr=$(curl -s --max-time 10 -H "Authorization: Bearer $token" \
           "https://api.cloudflare.com/client/v4/zones/$zone" 2>/dev/null)
     if grep -q '"success":true' <<<"$zr"; then
-      zname=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' <<<"$zr" | head -1)
+      # Pick the domain-shaped "name" (the zone's), not nested ones like the
+      # plan name ("Free Website"). Greedy .* used to grab the last match.
+      zname=$(grep -oE '"name":"[a-zA-Z0-9.-]+"' <<<"$zr" | sed -E 's/"name":"//; s/"//' \
+                | grep -E '\.[a-z]{2,}$' | head -1)
       green "Cloudflare zone reachable${zname:+ ($zname)}"
       [[ -n "$zname" && "$host" != *"$zname" ]] && warn "  $host is not under zone $zname — double-check the zone id"
     else
