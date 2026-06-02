@@ -202,6 +202,7 @@
           auth:
             bypass: {{ auth_bypass }}
             allowedDomains: "{{ auth_allowed_domains }}"
+            adminEmails: "{{ auth_admin_emails }}"
             redirectBaseUrl: "{{ auth_redirect_base_url }}"
             cookieSecure: {{ auth_cookie_secure }}
             sessionTtlSeconds: {{ auth_session_ttl_seconds }}
@@ -215,6 +216,7 @@
           hardening:
             demoMode: {{ demo_mode }}
             dailyCostCapUsd: "{{ daily_cost_cap_usd }}"
+            selfProtect: {{ self_protect }}
           # S2.E1 — sibling dashboards. The chart's subcharts spin up
           # slurm-dashboard + gpu-dashboard pods + ClusterIP services
           # in this namespace; Olympus reverse-proxies /slurm/* and
@@ -249,6 +251,20 @@
               value: "http://{{ olympus_release }}-olympus-slurm-dashboard:8770"
             - name: OLYMPUS_PROXY_GPU_URL
               value: "http://{{ olympus_release }}-olympus-gpu-dashboard:8780"
+            # Cloud creds for the terraform agent (sandbox demo only). Sourced
+            # from the deploy environment (env.sh). These land in the dashboard
+            # pod + the helm release values in plaintext — acceptable ONLY for a
+            # throwaway, single-tenant sandbox. tf_apply stays approval-gated.
+            - name: AWS_ACCESS_KEY_ID
+              value: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+            - name: AWS_REGION
+              value: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
+            - name: TF_VAR_cloudflare_api_token
+              value: "{{ lookup('env', 'TF_VAR_cloudflare_api_token') }}"
+            - name: CLOUDFLARE_API_TOKEN
+              value: "{{ lookup('env', 'TF_VAR_cloudflare_api_token') }}"
           extraVolumes:
             - name: hpc-hosts
               secret:

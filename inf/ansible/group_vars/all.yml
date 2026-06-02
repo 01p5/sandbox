@@ -7,7 +7,9 @@ pod_cidr: "192.168.0.0/16"
 dashboard_node_port: 30093
 
 olympus_repo_url: "https://github.com/01p5/01p5.git"
-olympus_repo_ref: "main"
+# Pinned to the inventory-from-terraform branch for the demo (selfProtect toggle
+# + /inventory/sync-terraform endpoint). Move back to "main" once merged.
+olympus_repo_ref: "feat/inventory-from-terraform"
 olympus_namespace: "olympus"
 olympus_release: "olympus"
 image_tag: "llm"
@@ -46,6 +48,13 @@ anthropic_api_key: ""
 # authenticated email. Empty here so a reproducer must opt in explicitly.
 auth_bypass: "false"
 auth_allowed_domains: ""
+# Super-admins for /admin (csv of exact emails, "*@domain", or "*").
+# Set via env.sh (DEPLOY_AUTH_ADMIN_EMAILS), e.g. "*@tianleyu.com".
+auth_admin_emails: ""
+# Self-protection master switch. true (default elsewhere) = agents can't manage
+# Olympus's own namespace/nodes. false ONLY for this throwaway single-tenant
+# sandbox, so the agents can drive the cluster itself for the demo.
+self_protect: "false"
 auth_redirect_base_url: "https://{{ dns_hostname }}"
 auth_cookie_secure: "true"
 auth_session_ttl_seconds: 604800

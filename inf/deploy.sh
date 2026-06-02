@@ -100,6 +100,7 @@ ansible_deploy() {
   [[ -n "${TF_VAR_dns_hostname:-}" ]]        && extra+=(-e "dns_hostname=${TF_VAR_dns_hostname}")
   [[ -n "${DEPLOY_CERTBOT_EMAIL:-}" ]]       && extra+=(-e "certbot_email=${DEPLOY_CERTBOT_EMAIL}")
   [[ -n "${DEPLOY_AUTH_ALLOWED_DOMAINS:-}" ]] && extra+=(-e "auth_allowed_domains=${DEPLOY_AUTH_ALLOWED_DOMAINS}")
+  [[ -n "${DEPLOY_AUTH_ADMIN_EMAILS:-}" ]]    && extra+=(-e "auth_admin_emails=${DEPLOY_AUTH_ADMIN_EMAILS}")
   ( cd "$ANSIBLE_DIR" && ansible-playbook site.yml "${extra[@]}" ) \
     2>&1 | tee /tmp/olympus-deploy-ansible.log
   green "✓ ansible complete (router=${router})"
