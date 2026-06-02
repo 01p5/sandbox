@@ -46,16 +46,24 @@ def call(name, arguments=None):
         return None
 
 
+def _ci(obj):
+    """Case-insensitive key view of a dict (netdb marshals PascalCase:
+    ID/Name/Kind), else empty."""
+    return {k.lower(): v for k, v in obj.items()} if isinstance(obj, dict) else {}
+
+
+def obj_id(obj):
+    return _ci(obj).get("id")
+
+
 def find_id(items, **match):
-    """Find the id of the first item matching all key=value pairs (case- and
-    id-key-insensitive)."""
+    """Find the id of the first item matching all key=value pairs. Keys + the
+    id field are matched case-insensitively (netdb returns ID/Name/Kind)."""
     for it in (items or []):
-        if not isinstance(it, dict):
-            continue
-        if all(str(it.get(k, "")).lower() == str(v).lower() for k, v in match.items()):
-            for key in ("id", "ID", "Id"):
-                if key in it:
-                    return it[key]
+        lit = _ci(it)
+        if all(str(lit.get(k.lower(), "")).lower() == str(v).lower() for k, v in match.items()):
+            if lit.get("id") is not None:
+                return lit["id"]
     return None
 
 
@@ -68,7 +76,7 @@ def main():
     if pid is None:
         print("  creating technitium provider")
         out = call("create_provider", {"name": "technitium", "kind": "technitium", "enabled": True})
-        pid = find_id([out], kind="technitium") or (out.get("id") if isinstance(out, dict) else None)
+        pid = obj_id(out)
     print(f"  provider id = {pid}")
 
     # 2. Forward zone
@@ -77,8 +85,8 @@ def main():
     if zid is None:
         print(f"  creating zone {zone}")
         out = call("create_zone", {"name": zone, "kind": "forward",
-                                    "description": "Olympus demo — agent-managed"})
-        zid = out.get("id") if isinstance(out, dict) else None
+                                    "description": "Olympus demo - agent-managed"})
+        zid = obj_id(out)
     print(f"  zone id = {zid}")
 
     # 3. Link
