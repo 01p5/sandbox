@@ -38,6 +38,12 @@ require_env_sh() {
   source "$ENV_SH"
 }
 
+preflight() {
+  # Read-only checks before we touch AWS. SKIP_PREFLIGHT=1 to bypass.
+  [[ "${SKIP_PREFLIGHT:-}" == "1" ]] && return 0
+  "${HERE}/preflight.sh" || fail "preflight failed — fix the above, or re-run with SKIP_PREFLIGHT=1"
+}
+
 tf_destroy() {
   step "terraform destroy (AWS + Cloudflare)"
   ( cd "$TF_DIR" && terraform destroy -auto-approve ) \
@@ -86,17 +92,6 @@ ansible_deploy() {
   green "✓ ansible complete (router=${router})"
 }
 
-verify_live() {
-  step "verify live"
-  local host="${TF_VAR_dns_hostname:-}"
-  [[ -n "$host" ]] || { red "  TF_VAR_dns_hostname unset — skipping live check (set it in env.sh)"; return 0; }
-  if curl --max-time 10 -sf "https://${host}/healthz" >/dev/null; then
-    green "✓ https://${host}/healthz returns 200"
-  else
-    red "  warning: https://${host}/healthz didn't respond cleanly — may still be issuing certs (DNS propagation can take a minute)"
-  fi
-}
-
 netdb_up() {
   # One-time bring-up of the persistent NetDB / Technitium / Kea server.
   # SEPARATE terraform state from the cluster, so cluster --fresh never
@@ -140,10 +135,11 @@ netdb_up() {
 case "${1:-}" in
   --fresh)
     require_env_sh
+    preflight
     tf_destroy
     tf_apply
     ansible_deploy
-    verify_live
+    "${HERE}/verify.sh" || true
     ;;
   --destroy)
     require_env_sh
@@ -152,7 +148,7 @@ case "${1:-}" in
   --ansible-only)
     require_env_sh
     ansible_deploy
-    verify_live
+    "${HERE}/verify.sh" || true
     ;;
   netdb-up)
     require_env_sh
@@ -160,6 +156,7 @@ case "${1:-}" in
     ;;
   ""|--default|--up)
     require_env_sh
+    preflight
     # If terraform state is empty (no instances), apply first.
     if ! (cd "$TF_DIR" && terraform state list 2>/dev/null | grep -q aws_instance); then
       tf_apply
@@ -167,7 +164,7 @@ case "${1:-}" in
       step "terraform state has instances — skipping apply (use --fresh to redeploy)"
     fi
     ansible_deploy
-    verify_live
+    "${HERE}/verify.sh" || true
     ;;
   -h|--help)
     sed -n '3,16p' "${BASH_SOURCE[0]}"
