@@ -467,6 +467,32 @@
         - seed_w1.rc != 0
         - "'already exists' not in seed_w1.stderr"
 
+    # Seed any hosts declared via the terraform `olympus_inventory_hosts` output
+    # (written by terraform to deployment/inventory_hosts.json). Lets a
+    # provisioned host auto-register without a manual add. The file is read on
+    # the ansible controller (lookup); the add runs in the pod. Idempotent.
+    - name: Seed terraform-declared inventory hosts
+      ansible.builtin.command: >
+        {{ _kubectl_exec_prefix }}
+        olympus-inventory --store /var/lib/olympus/inventory.json
+        add-host --name {{ item.name }}
+        --address {{ item.address }}
+        --ssh-user {{ item.ssh_user | default('ubuntu') }}
+        --ssh-port {{ item.ssh_port | default(22) }}
+        {% if item.key | default('') %}--key {{ item.key }}{% endif %}
+        {% for g in item.groups | default([]) %} --group {{ g }}{% endfor %}
+        {% for k, v in (item.vars | default({})).items() %} --var {{ k }}={{ v }}{% endfor %}
+      loop: >-
+        {{ (lookup('file', playbook_dir + '/../deployment/inventory_hosts.json',
+            errors='ignore') | default('[]', true)) | from_json }}
+      loop_control:
+        label: "{{ item.name }}"
+      register: seed_tf_hosts
+      changed_when: "'added host' in seed_tf_hosts.stdout"
+      failed_when:
+        - seed_tf_hosts.rc != 0
+        - "'already exists' not in seed_tf_hosts.stderr"
+
     - name: Confirm the inventory after bootstrap
       ansible.builtin.command: >
         {{ _kubectl_exec_prefix }}
