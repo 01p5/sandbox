@@ -58,6 +58,18 @@ tf_apply() {
   green "✓ apply complete"
 }
 
+wait_for_nodes() {
+  # Fresh EC2 instances aren't SSH-ready the instant `terraform apply` returns
+  # (sshd is still coming up — you get "connection refused"). Block until every
+  # inventory host accepts an SSH connection before running the playbook, so a
+  # clean apply -> ansible handoff doesn't fail on a boot race.
+  step "wait for nodes to accept SSH"
+  ( cd "$ANSIBLE_DIR" && ansible all -m wait_for_connection -a 'delay=5 timeout=420' ) \
+    2>&1 | tee /tmp/olympus-deploy-wait.log \
+    || fail "nodes never became SSH-reachable (check the SG / instance boot)"
+  green "✓ nodes reachable"
+}
+
 ansible_deploy() {
   step "ansible-playbook (kubeadm + Olympus + TLS + inventory bootstrap + HPC demo)"
   # The ansible.cfg points at ../deployment/inventory.ini which terraform
@@ -65,6 +77,7 @@ ansible_deploy() {
   # write it). Bail clearly so the user can fix.
   [[ -f "${HERE}/deployment/inventory.ini" ]] \
     || fail "${HERE}/deployment/inventory.ini missing — run ./inf/deploy.sh apply first"
+  wait_for_nodes
   # Deploy params come from env.sh so the committed group_vars stay generic
   # (example.com). Anything unset falls back to the group_vars default.
   #   - router defaults to "manual" (no LLM key needed); set OLYMPUS_ROUTER=llm
