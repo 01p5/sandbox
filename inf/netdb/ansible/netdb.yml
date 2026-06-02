@@ -14,7 +14,7 @@
   become: true
   vars:
     netdb_repo_url: "https://github.com/01p5/netdb.git"
-    netdb_repo_ref: "main"
+    netdb_repo_ref: "master"
     netdb_dir: /opt/netdb
     # delegated_zone + ns_hostname are injected from the terraform-emitted
     # inventory ([netdb:vars]); dns_server_admin_password +
