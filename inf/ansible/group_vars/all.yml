@@ -7,9 +7,9 @@ pod_cidr: "192.168.0.0/16"
 dashboard_node_port: 30093
 
 olympus_repo_url: "https://github.com/01p5/01p5.git"
-# Pinned to the inventory-from-terraform branch for the demo (selfProtect toggle
-# + /inventory/sync-terraform endpoint). Move back to "main" once merged.
-olympus_repo_ref: "feat/inventory-from-terraform"
+# Tracks main. The inventory-from-terraform work (selfProtect toggle,
+# /inventory/sync-terraform endpoint, chat Stop button) merged in 01p5 #4.
+olympus_repo_ref: "main"
 olympus_namespace: "olympus"
 olympus_release: "olympus"
 image_tag: "llm"
