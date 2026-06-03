@@ -1,0 +1,100 @@
+---
+# Provision the persistent NetDB stack (netdb + Technitium DNS + Kea DHCP)
+# on the dedicated DNS server stood up by inf/netdb/terraform.
+#
+# Run ONCE after that terraform applies. The box + its docker volumes
+# (./data: netdb.sqlite, Technitium zones, Kea leases) live on the gp3 root
+# and SURVIVE cluster redeploys — this play is not part of the cluster
+# deploy. Secrets come in via --extra-vars (see inf/deploy.sh netdb-up).
+#
+#   cd inf/netdb/ansible && ansible-playbook netdb.yml \
+#     -e dns_server_admin_password=... -e netdb_cloudflare_token=...
+- name: Provision the NetDB / Technitium / Kea stack
+  hosts: netdb
+  become: true
+  vars:
+    netdb_repo_url: "https://github.com/01p5/netdb.git"
+    netdb_repo_ref: "master"
+    netdb_dir: /opt/netdb
+    # delegated_zone + ns_hostname are injected from the terraform-emitted
+    # inventory ([netdb:vars]); dns_server_admin_password +
+    # netdb_cloudflare_token come from --extra-vars.
+  tasks:
+    - name: Install prereqs (docker convenience script needs curl/ca-certs; git for the clone)
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, git]
+        update_cache: true
+        state: present
+
+    - name: Install Docker (idempotent — skips if already present)
+      ansible.builtin.shell: |
+        set -e
+        if ! command -v docker >/dev/null 2>&1; then
+          curl -fsSL https://get.docker.com | sh
+        fi
+      register: docker_install
+      changed_when: "'Download complete' in docker_install.stdout or 'Installing' in docker_install.stdout"
+
+    # Technitium binds :53 (prod overlay). systemd-resolved owns it on Ubuntu.
+    - name: Stop + disable systemd-resolved so Technitium can bind :53
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Repoint the host resolver (resolv.conf no longer managed by resolved)
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: "nameserver 1.1.1.1\nnameserver 8.8.8.8\n"
+        force: true
+        mode: "0644"
+
+    - name: Clone netdb
+      ansible.builtin.git:
+        repo: "{{ netdb_repo_url }}"
+        version: "{{ netdb_repo_ref }}"
+        dest: "{{ netdb_dir }}"
+        force: true
+
+    - name: Render netdb .env
+      ansible.builtin.template:
+        src: netdb.env.j2
+        dest: "{{ netdb_dir }}/.env"
+        mode: "0600"
+
+    - name: Bring up the stack (prod overlay publishes :53)
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.yml -f compose.prod.yaml up -d --build
+        chdir: "{{ netdb_dir }}"
+      register: compose_up
+      changed_when: true
+
+    - name: Wait for netdb /healthz
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/healthz
+        status_code: 200
+      register: hz
+      until: hz.status == 200
+      retries: 40
+      delay: 5
+
+    - name: Seed the delegated zone in netdb (best-effort; also doable via the agent)
+      ansible.builtin.script: "files/seed-zone.py {{ delegated_zone }}"
+      args:
+        executable: python3
+      register: seed
+      changed_when: "'created' in seed.stdout"
+      failed_when: false
+
+    - name: Seed report
+      ansible.builtin.debug:
+        var: seed.stdout_lines
+
+    - name: Done
+      ansible.builtin.debug:
+        msg: >-
+          NetDB up on {{ netdb_public_ip | default(inventory_hostname) }} —
+          MCP at http://{{ netdb_public_ip | default(inventory_hostname) }}:8080/mcp,
+          Technitium authoritative for {{ delegated_zone }} (ns {{ ns_hostname }}).
+          Set netdb_mcp_host to this IP in the cluster group_vars + redeploy.

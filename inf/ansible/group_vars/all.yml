@@ -7,6 +7,8 @@ pod_cidr: "192.168.0.0/16"
 dashboard_node_port: 30093
 
 olympus_repo_url: "https://github.com/01p5/01p5.git"
+# Tracks main. The inventory-from-terraform work (selfProtect toggle,
+# /inventory/sync-terraform endpoint, chat Stop button) merged in 01p5 #4.
 olympus_repo_ref: "main"
 olympus_namespace: "olympus"
 olympus_release: "olympus"
@@ -21,8 +23,17 @@ slurm_mgr_repo_ref: "main"
 gpu_watch_repo_url: "https://github.com/01p5/gpu-watch.git"
 gpu_watch_repo_ref: "main"
 
-dns_hostname: "0lympu5.com"
-certbot_email: "admin@01p5.com"
+# Set these to your own domain. deploy.sh overrides them from env.sh
+# (DEPLOY_DNS_HOSTNAME / DEPLOY_CERTBOT_EMAIL) so the public repo stays generic.
+dns_hostname: "olympus.example.com"
+certbot_email: "admin@example.com"
+
+# NetDB (IPAM/DNS/DHCP) — optional, wired into Olympus's sysadmin agent over
+# MCP. Stand up the persistent DNS server with `deploy.sh netdb-up` (see
+# inf/netdb), then set netdb_mcp_host to the EIP it prints + redeploy. EMPTY
+# = netdb not wired (mcpServers renders "[]").
+netdb_mcp_host: ""
+netdb_delegated_zone: "lab.example.com"
 certbot_staging: "0" # "1" for Let's Encrypt staging while iterating
 
 # Overridden at runtime via --extra-vars; default empty so the chart's
@@ -31,11 +42,19 @@ openai_api_key: ""
 anthropic_api_key: ""
 
 # Auth + hardening (chart maps these onto OLYMPUS_AUTH_* / OLYMPUS_DEMO_*
-# envs on the dashboard pod). Defaults are demo-safe for the public
-# 0lympu5.com deploy: bypass off, allowlist Stanford + tianleyu, redirect
-# back to the public hostname, demo_mode on so destructive verbs auto-reject.
+# envs on the dashboard pod). Demo-safe defaults: login bypass off, redirect
+# back to the configured hostname. Set auth_allowed_domains to YOUR domain(s)
+# (comma-separated) via env.sh (DEPLOY_AUTH_ALLOWED_DOMAINS); "*" allows any
+# authenticated email. Empty here so a reproducer must opt in explicitly.
 auth_bypass: "false"
-auth_allowed_domains: "stanford.edu,tianleyu.com"
+auth_allowed_domains: ""
+# Super-admins for /admin (csv of exact emails, "*@domain", or "*").
+# Set via env.sh (DEPLOY_AUTH_ADMIN_EMAILS), e.g. "*@tianleyu.com".
+auth_admin_emails: ""
+# Self-protection master switch. true (default elsewhere) = agents can't manage
+# Olympus's own namespace/nodes. false ONLY for this throwaway single-tenant
+# sandbox, so the agents can drive the cluster itself for the demo.
+self_protect: "false"
 auth_redirect_base_url: "https://{{ dns_hostname }}"
 auth_cookie_secure: "true"
 auth_session_ttl_seconds: 604800

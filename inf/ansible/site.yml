@@ -202,6 +202,7 @@
           auth:
             bypass: {{ auth_bypass }}
             allowedDomains: "{{ auth_allowed_domains }}"
+            adminEmails: "{{ auth_admin_emails }}"
             redirectBaseUrl: "{{ auth_redirect_base_url }}"
             cookieSecure: {{ auth_cookie_secure }}
             sessionTtlSeconds: {{ auth_session_ttl_seconds }}
@@ -215,6 +216,7 @@
           hardening:
             demoMode: {{ demo_mode }}
             dailyCostCapUsd: "{{ daily_cost_cap_usd }}"
+            selfProtect: {{ self_protect }}
           # S2.E1 — sibling dashboards. The chart's subcharts spin up
           # slurm-dashboard + gpu-dashboard pods + ClusterIP services
           # in this namespace; Olympus reverse-proxies /slurm/* and
@@ -223,6 +225,12 @@
             enabled: true
           gpuDashboard:
             enabled: true
+          # netdb (IPAM/DNS/DHCP) MCP — grafts onto the sysadmin agent. Only
+          # populated when netdb_mcp_host is set (the persistent DNS server's
+          # EIP; see inf/netdb + `deploy.sh netdb-up`). Renders "[]" otherwise
+          # (no servers). The 23 destructive verbs route through approval.
+          mcpServers: |
+            [{% if netdb_mcp_host | default('') %}{"name":"netdb","target_agent":"sysadmin","transport":"http","url":"http://{{ netdb_mcp_host }}:8080/mcp","destructive":["create_host","update_host","delete_host","create_nic","delete_nic","create_ip","delete_ip","create_subnet","update_subnet","delete_subnet","link_subnet_zone","unlink_subnet_zone","create_zone","delete_zone","create_provider","delete_provider","link_zone_provider","unlink_zone_provider","create_manual_dns","delete_dns_record","dns_sync_now","kea_sync_now","kea_poll_leases"]}{% endif %}]
           # HPC hosts.json mount — feeds slurm-mcp + gpu-mcp the
           # cluster registry the real packages expect (S1.3). The
           # Secret is optional; if either key is missing, the
@@ -243,6 +251,20 @@
               value: "http://{{ olympus_release }}-olympus-slurm-dashboard:8770"
             - name: OLYMPUS_PROXY_GPU_URL
               value: "http://{{ olympus_release }}-olympus-gpu-dashboard:8780"
+            # Cloud creds for the terraform agent (sandbox demo only). Sourced
+            # from the deploy environment (env.sh). These land in the dashboard
+            # pod + the helm release values in plaintext — acceptable ONLY for a
+            # throwaway, single-tenant sandbox. tf_apply stays approval-gated.
+            - name: AWS_ACCESS_KEY_ID
+              value: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+            - name: AWS_REGION
+              value: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
+            - name: TF_VAR_cloudflare_api_token
+              value: "{{ lookup('env', 'TF_VAR_cloudflare_api_token') }}"
+            - name: CLOUDFLARE_API_TOKEN
+              value: "{{ lookup('env', 'TF_VAR_cloudflare_api_token') }}"
           extraVolumes:
             - name: hpc-hosts
               secret:
@@ -460,6 +482,32 @@
       failed_when:
         - seed_w1.rc != 0
         - "'already exists' not in seed_w1.stderr"
+
+    # Seed any hosts declared via the terraform `olympus_inventory_hosts` output
+    # (written by terraform to deployment/inventory_hosts.json). Lets a
+    # provisioned host auto-register without a manual add. The file is read on
+    # the ansible controller (lookup); the add runs in the pod. Idempotent.
+    - name: Seed terraform-declared inventory hosts
+      ansible.builtin.command: >
+        {{ _kubectl_exec_prefix }}
+        olympus-inventory --store /var/lib/olympus/inventory.json
+        add-host --name {{ item.name }}
+        --address {{ item.address }}
+        --ssh-user {{ item.ssh_user | default('ubuntu') }}
+        --ssh-port {{ item.ssh_port | default(22) }}
+        {% if item.key | default('') %}--key {{ item.key }}{% endif %}
+        {% for g in item.groups | default([]) %} --group {{ g }}{% endfor %}
+        {% for k, v in (item.vars | default({})).items() %} --var {{ k }}={{ v }}{% endfor %}
+      loop: >-
+        {{ (lookup('file', playbook_dir + '/../deployment/inventory_hosts.json',
+            errors='ignore') | default('[]', true)) | from_json }}
+      loop_control:
+        label: "{{ item.name }}"
+      register: seed_tf_hosts
+      changed_when: "'added host' in seed_tf_hosts.stdout"
+      failed_when:
+        - seed_tf_hosts.rc != 0
+        - "'already exists' not in seed_tf_hosts.stderr"
 
     - name: Confirm the inventory after bootstrap
       ansible.builtin.command: >
