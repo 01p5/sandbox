@@ -42,17 +42,11 @@ it, then we tear it down. Validated end-to-end on the sandbox
    → **Approve** the `tf_apply` card. (For a richer beat, first ask the
    *programmer* agent to write the stack — see "Agent-authored" below.)
 
-2. **Register (operator one-liner).** Seed the inventory from the stack's output.
-   Easiest: paste this in the browser devtools console (you're already the
-   authenticated admin, so the session cookie rides along):
-   ```js
-   fetch('/inventory/sync-terraform', {method:'POST',
-     headers:{'Content-Type':'application/json'}, credentials:'same-origin',
-     body: JSON.stringify({working_dir:'/tmp/demo-host'})}).then(r=>r.json()).then(console.log)
-   // → {added:["demo-host"], skipped:[], errors:[]}
-   ```
+2. **Register (one click).** Open **Hosts** → **Sync from Terraform** (admin
+   button) → the working dir defaults to `/tmp/demo-host` → **Sync**.
+   Shows `added demo-host`. (The host appears immediately in the list below.)
 
-3. **Show it landed.** Open **Hosts** → `demo-host · ubuntu@10.20.x.x · key:
+3. **Show it landed.** Still on **Hosts**: `demo-host · ubuntu@10.20.x.x · key:
    cluster · "synced from terraform"`.
 
 4. **Manage it (agent + Ansible).** Send:
@@ -84,5 +78,6 @@ pod restarted.)
 
   then continue from step 1's apply.
 
-- **One-click register:** a "Sync from Terraform" button on the Hosts page can
-  replace the devtools snippet in step 2 (ask and it can be added).
+- **Scripted register (no UI):** if you'd rather not click, the admin endpoint
+  is `POST /inventory/sync-terraform {working_dir:"/tmp/demo-host"}` (same thing
+  the button calls).
