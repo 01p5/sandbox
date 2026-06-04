@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and set these to YOUR values. Secrets (the
+# Cloudflare token) come from the environment via TF_VAR_cloudflare_api_token
+# (see inf/env.sh) — do NOT put the token here.
+
+aws_region    = "us-west-2"
+customer_name = "sandbox"
+
+# The zone Technitium becomes authoritative for, its NS hostname, and the
+# PARENT Cloudflare zone they live under. The parent zone must already exist
+# in your Cloudflare account.
+delegated_zone       = "lab.example.com"
+ns_hostname          = "ns1.lab.example.com"
+cloudflare_zone_name = "example.com"
+cloudflare_zone_id   = "<your-cloudflare-zone-id>" # zone Overview page
+
+# netdb's :8080 (MCP) has no auth + write tools — it MUST be locked to your
+# cluster's egress IP(s). `deploy.sh netdb-up` sets mcp_ingress_cidrs from the
+# cluster inventory automatically; set it here only if running terraform by hand.
+#   mcp_ingress_cidrs = ["<cluster-cp-ip>/32", "<cluster-worker-ip>/32"]
+#   admin_cidr        = "<your-ip>/32"   # SSH + Technitium console (5380)
+admin_cidr        = "0.0.0.0/0"
+mcp_ingress_cidrs = ["0.0.0.0/0"]

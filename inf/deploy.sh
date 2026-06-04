@@ -7,6 +7,10 @@
 #   ./inf/deploy.sh --fresh        # destroy + apply + ansible (clean redeploy)
 #   ./inf/deploy.sh --ansible-only # ansible only (assumes infra is up)
 #   ./inf/deploy.sh --destroy      # destroy only (no rebuild)
+#   ./inf/deploy.sh netdb-up       # one-time: stand up the PERSISTENT NetDB /
+#                                  #   DNS server (separate state — survives
+#                                  #   cluster redeploys). Prints the EIP to set
+#                                  #   as netdb_mcp_host in group_vars.
 #
 # Reads creds from ./inf/env.sh (gitignored). Logs each phase to
 # /tmp/olympus-deploy-<phase>.log.
@@ -17,6 +21,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_SH="${HERE}/env.sh"
 TF_DIR="${HERE}/terraform"
 ANSIBLE_DIR="${HERE}/ansible"
+NETDB_TF_DIR="${HERE}/netdb/terraform"
+NETDB_ANSIBLE_DIR="${HERE}/netdb/ansible"
 
 # ---------- helpers ----------
 cyan()  { printf '\033[36m%s\033[0m\n' "$*"; }
@@ -78,6 +84,45 @@ verify_live() {
   fi
 }
 
+netdb_up() {
+  # One-time bring-up of the persistent NetDB / Technitium / Kea server.
+  # SEPARATE terraform state from the cluster, so cluster --fresh never
+  # destroys it. Idempotent: re-running applies + re-provisions in place.
+  # Lock netdb's :8080 (no auth, write tools) to the cluster's public egress
+  # IPs, derived from the cluster inventory. Without this it'd be internet-open
+  # and bypass Olympus's approval queue.
+  local inv="${HERE}/deployment/inventory.ini" cidrs
+  if [[ -f "$inv" ]]; then
+    cidrs=$(awk '{for(i=1;i<=NF;i++) if($i ~ /^ansible_host=/){split($i,a,"="); printf "\"%s/32\",", a[2]}}' "$inv")
+    cidrs="[${cidrs%,}]"
+    if [[ "$cidrs" != "[]" ]]; then
+      export TF_VAR_mcp_ingress_cidrs="$cidrs"
+      green "✓ netdb :8080 will be locked to the cluster: $cidrs"
+    fi
+  fi
+  [[ -n "${TF_VAR_mcp_ingress_cidrs:-}" ]] || red "  warning: no cluster inventory found — netdb :8080 falls back to its var default; lock it via terraform.tfvars"
+
+  step "terraform apply — NetDB/DNS server (VPC, EC2 ×1, EIP, Cloudflare NS delegation)"
+  # TF_VAR_cloudflare_api_token is already exported by inf/env.sh.
+  ( cd "$NETDB_TF_DIR" \
+      && terraform init -input=false \
+      && terraform apply -auto-approve ) \
+    2>&1 | tee /tmp/olympus-deploy-netdb-tf.log
+  local eip
+  eip="$(cd "$NETDB_TF_DIR" && terraform output -raw netdb_public_ip)"
+  [[ -n "$eip" ]] || fail "could not read netdb EIP from terraform output"
+  green "✓ NetDB server EIP: $eip"
+
+  step "ansible — provision the NetDB stack (docker compose + zone seed)"
+  [[ -n "${DNS_SERVER_ADMIN_PASSWORD:-}" ]] || fail "set DNS_SERVER_ADMIN_PASSWORD in inf/env.sh"
+  ( cd "$NETDB_ANSIBLE_DIR" && ansible-playbook netdb.yml \
+      -e dns_server_admin_password="${DNS_SERVER_ADMIN_PASSWORD}" \
+      -e netdb_cloudflare_token="${NETDB_CLOUDFLARE_TOKEN:-}" \
+  ) 2>&1 | tee /tmp/olympus-deploy-netdb-ansible.log
+  green "✓ NetDB stack up"
+  cyan  "▶ Next: set  netdb_mcp_host: \"$eip\"  in inf/ansible/group_vars/all.yml, then ./inf/deploy.sh --ansible-only"
+}
+
 # ---------- args ----------
 case "${1:-}" in
   --fresh)
@@ -96,6 +141,10 @@ case "${1:-}" in
     ansible_deploy
     verify_live
     ;;
+  netdb-up)
+    require_env_sh
+    netdb_up
+    ;;
   ""|--default|--up)
     require_env_sh
     # If terraform state is empty (no instances), apply first.
@@ -108,7 +157,7 @@ case "${1:-}" in
     verify_live
     ;;
   -h|--help)
-    sed -n '3,12p' "${BASH_SOURCE[0]}"
+    sed -n '3,16p' "${BASH_SOURCE[0]}"
     ;;
   *)
     fail "unknown flag: $1 (try --help)"

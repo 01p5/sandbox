@@ -23,6 +23,13 @@ gpu_watch_repo_ref: "main"
 
 dns_hostname: "0lympu5.com"
 certbot_email: "admin@01p5.com"
+
+# NetDB (IPAM/DNS/DHCP) — optional, wired into Olympus's sysadmin agent over
+# MCP. Stand up the persistent DNS server with `deploy.sh netdb-up` (see
+# inf/netdb), then set netdb_mcp_host to the EIP it prints + redeploy. EMPTY
+# = netdb not wired (mcpServers renders "[]").
+netdb_mcp_host: ""
+netdb_delegated_zone: "lab.example.com"
 certbot_staging: "0" # "1" for Let's Encrypt staging while iterating
 
 # Overridden at runtime via --extra-vars; default empty so the chart's

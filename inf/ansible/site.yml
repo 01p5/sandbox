@@ -223,6 +223,12 @@
             enabled: true
           gpuDashboard:
             enabled: true
+          # netdb (IPAM/DNS/DHCP) MCP — grafts onto the sysadmin agent. Only
+          # populated when netdb_mcp_host is set (the persistent DNS server's
+          # EIP; see inf/netdb + `deploy.sh netdb-up`). Renders "[]" otherwise
+          # (no servers). The 23 destructive verbs route through approval.
+          mcpServers: |
+            [{% if netdb_mcp_host | default('') %}{"name":"netdb","target_agent":"sysadmin","transport":"http","url":"http://{{ netdb_mcp_host }}:8080/mcp","destructive":["create_host","update_host","delete_host","create_nic","delete_nic","create_ip","delete_ip","create_subnet","update_subnet","delete_subnet","link_subnet_zone","unlink_subnet_zone","create_zone","delete_zone","create_provider","delete_provider","link_zone_provider","unlink_zone_provider","create_manual_dns","delete_dns_record","dns_sync_now","kea_sync_now","kea_poll_leases"]}{% endif %}]
           # HPC hosts.json mount — feeds slurm-mcp + gpu-mcp the
           # cluster registry the real packages expect (S1.3). The
           # Secret is optional; if either key is missing, the
